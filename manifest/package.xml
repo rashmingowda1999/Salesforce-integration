@@ -8,13 +8,12 @@
         <members>Account.Active__c</members>
         <name>CustomField</name>
     </types>
-
-   
-   <!-- <types>
-        <members>*</members>
+   <types>
+        <members>AccountDescriptionUpdater</members>
+        <members>TestAccountDescriptionUpdater</members>
         <name>ApexClass</name>
     </types>
-    <types>
+    <!-- <types>
         <members>*</members>
         <name>ApexComponent</name>
     </types>
