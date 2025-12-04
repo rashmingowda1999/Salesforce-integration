@@ -13,7 +13,7 @@ private class TestAccountDescriptionUpdater {
         String updatedDescription = 'New Updated Description';
         AccountDescriptionUpdater.updateAccountDescription(testAccount.Id, updatedDescription);
 
-        // 3. Verify Results
+        // 3. Verify Results1
         // Retrieve the updated Account record
         Account updatedAcc = [SELECT Id, Description FROM Account WHERE Id = :testAccount.Id];
 
