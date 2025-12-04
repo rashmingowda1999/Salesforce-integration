@@ -38,7 +38,8 @@ jobs:
                    echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                    sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                    sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
-                   if validation successful
+                   #fetch deployment id and display the id 
+                   if [ $? -eq 0 ]
                    then 
                       echo "Validation successful. Proceeding to deployment."
                       sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
