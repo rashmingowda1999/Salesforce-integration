@@ -4,7 +4,7 @@ public class AccountDescriptionUpdater {
         // Retrieve the Account record
         Account acc = [SELECT Id, Description FROM Account WHERE Id = :accountId];
 
-        // Update the Description field1
+        // Update the Description field11
         acc.Description = newDescription;
 
         // Update the record in the database
