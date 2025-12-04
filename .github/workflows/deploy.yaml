@@ -35,7 +35,9 @@ jobs:
 
           - name: 'validate deployment before deploying, deploy only if validation is successful'
             run: |
-                  sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
+                   echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                   sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                   sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
            #############################     
           #- name: 'Deploy to environment with running all local tests'
            # run: |
