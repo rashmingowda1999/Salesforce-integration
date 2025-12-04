@@ -8,7 +8,7 @@ private class TestAccountDescriptionUpdater {
         Account testAccount = new Account(Name = 'Test Account', Description = 'Original Description');
         insert testAccount;
 
-        // 2. Call the Method to Test
+        // 2. Call the Method to Test1
         // Call the method from the main class
         String updatedDescription = 'New Updated Description';
         AccountDescriptionUpdater.updateAccountDescription(testAccount.Id, updatedDescription);
