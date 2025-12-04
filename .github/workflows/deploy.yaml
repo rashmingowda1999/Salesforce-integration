@@ -49,3 +49,4 @@ jobs:
                     echo "No Apex classes found in the changes. Deploying without running tests."
                     sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun
                   fi
+              #- name: 'Deploy profiles for delta 
