@@ -38,9 +38,9 @@ jobs:
                    echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                    sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                    sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
-                   #fetch deployment id and display the id 
-                   VALIDATE_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
-                   echo "VALIDATION ID: $VALIDATE_ID"
+                   
+                   DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                   echo "VALIDATION ID: $DEPLOY_ID"
                    if [ $? -eq 0 ]
                    then 
                       echo "Validation successful. Proceeding to deployment."
@@ -54,9 +54,10 @@ jobs:
 
           - name: 'if running test classes display test class names and their status'
             run: |
-                   DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
-                   echo "Deployment ID: $DEPLOY_ID"
-                   sf project deploy report $DEPLOY_ID --verbose --json | jq -r '.result.testResults[] | "Test Class: \(.name), Status: \(.outcome)"'
+                  sf project deploy report $DEPLOY_ID --verbose --json | jq -r '.result.testResults[] | "Test Class: \(.name), Status: \(.outcome)"'
+                #DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                   #echo "Deployment ID: $DEPLOY_ID"
+                   
 
                 
 
