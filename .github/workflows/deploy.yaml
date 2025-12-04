@@ -32,21 +32,27 @@ jobs:
                 mkdir changed-sources
                 sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
                 echo "[INFO] Diff generated"
-                
-          - name: 'Deploy to environment with running all local tests'
-            run: |
-                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
 
-          - name: 'Deploy the changes and run test classes if any apex class in the branch'
+          - name: 'validate deployment before deploying, deploy only if validation is successful'
             run: |
-                  if [ -d "changed-sources/force-app/main/default/classes" ] 
-                  then 
-                    echo "Apex classes found in the changes. Running all local tests."
-                    sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
-                  else 
-                    echo "No Apex classes found in the changes. Deploying without running tests."
-                    sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun
-                  fi
-              #- name: 'Deploy profiles for delta 
+                  sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
+           #############################     
+          #- name: 'Deploy to environment with running all local tests'
+           # run: |
+            #    echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+             #   sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+              #  sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+
+          #- name: 'Deploy the changes and run test classes if any apex class in the branch'
+           # run: |
+            #      if [ -d "changed-sources/force-app/main/default/classes" ] 
+             #     then 
+              #      echo "Apex classes found in the changes. Running all local tests."
+               #     sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+                #  else 
+                 #   echo "No Apex classes found in the changes. Deploying without running tests."
+                  #  sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun
+                  #fi
+          #- name: 'validate deployment before deploying, deploy only if validation is successful'
+           # run: |
+            #      sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
