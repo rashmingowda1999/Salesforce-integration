@@ -43,6 +43,15 @@ jobs:
             run: |
                    echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                    sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                   
+                   # Check if there are delta changes to deploy
+                   if [ ! -d "changed-sources/force-app" ]; then
+                     echo "[WARNING] No delta changes detected in the commit. Skipping main source deployment."
+                     echo "DEPLOY_ID=" > deploy_id.txt
+                     exit 0
+                   fi
+                   
+                   echo "[INFO] Delta changes detected. Proceeding with validation and deployment."
                    sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
                    
                    DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
@@ -52,7 +61,8 @@ jobs:
                       echo "Validation successful. Proceeding to deployment."
                       sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
                       DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
-                   echo "Deployment ID: $DEPLOY_ID"
+                      echo "Deployment ID: $DEPLOY_ID"
+                      echo "$DEPLOY_ID" > deploy_id.txt
                    else 
                       echo "Validation failed. Deployment aborted."
                       exit 1
@@ -78,7 +88,7 @@ jobs:
           - name: 'Deploy dependent metadata first (Objects, Fields, Validation Rules)'
             run: |
                   # Check if there are dependent metadata changes
-                  if [ -d "delta-dependencies/force-app/main/default/objects" ] || [ -d "delta-dependencies/force-app/main/default/validationrules" ]; then
+                  if [ -d "delta-dependencies/force-app/main/default/objects" ] || [ -d "delta-dependencies/force-app/main/default/validationrules" ] || [ -d "delta-dependencies/force-app/main/default/recordtypes" ]; then
                     echo "[STEP 1] Deploying dependent metadata (Objects, Custom Fields, Validation Rules)..."
                     
                     # Validate dependent metadata
