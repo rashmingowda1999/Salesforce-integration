@@ -5,9 +5,11 @@
         <field>Account.Active1__c</field>
         <readable>true</readable>
     </fieldPermissions>
+    
     <fieldPermissions>
         <editable>true</editable>
         <field>Account.Active1__c2</field>
         <readable>true</readable>
     </fieldPermissions>
+
 </Profile>
