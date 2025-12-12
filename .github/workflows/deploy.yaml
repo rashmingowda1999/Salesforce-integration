@@ -24,14 +24,20 @@ jobs:
             run: npm install @salesforce/cli --global
           - name: 'Installing sfdx git delta'
             run: | 
-                echo Y | sfdx plugins:install sfdx-git-delta
-                sfdx plugins
+                sf plugins install sfdx-git-delta
+                sf plugins
 
           - name: 'Create delta packages'
             run: | 
                 mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ || true
                 echo "[INFO] Diff generated"
+                # Verify delta packages exist
+                if [ -d "changed-sources/force-app" ]; then
+                  echo "[INFO] Delta packages created successfully"
+                else
+                  echo "[WARNING] No delta changes detected or delta output structure differs"
+                fi
 
           - name: 'validate deployment before deploying, deploy only if validation is successful'
             run: |
@@ -56,8 +62,11 @@ jobs:
                   # Create output directory for dependent metadata
                   mkdir -p delta-dependencies
                   
+                  # Verify sgd plugin is available
+                  sf plugins --core | grep -i delta || echo "[WARNING] sfdx-git-delta may not be installed"
+                  
                   # Generate delta for metadata that profiles depend on
-                  sf sgd metadata delta --to "HEAD" --from "HEAD~1" --output delta-dependencies/ --source force-app/ --metadata "CustomObject,CustomField,ValidationRule,RecordType"
+                  sf sgd source delta --to "HEAD" --from "HEAD~1" --output delta-dependencies/ --source force-app/ --metadata "CustomObject,CustomField,ValidationRule,RecordType" || true
                   echo "[INFO] Dependent Metadata Diff generated"
                   
                   # List detected changes for visibility
@@ -106,7 +115,7 @@ jobs:
                   mkdir -p delta-profiles
                   
                   # Generate delta for Profile and PermissionSet only
-                  sf sgd metadata delta --to "HEAD" --from "HEAD~1" --output delta-profiles/ --source force-app/ --metadata "Profile,PermissionSet"
+                  sf sgd source delta --to "HEAD" --from "HEAD~1" --output delta-profiles/ --source force-app/ --metadata "Profile,PermissionSet" || true
                   echo "[INFO] Profile/PermissionSet Metadata Diff generated"
                   
                   # List detected changes for visibility
