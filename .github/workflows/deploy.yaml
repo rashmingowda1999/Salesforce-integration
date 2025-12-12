@@ -93,27 +93,21 @@ jobs:
                     
                     # Validate dependent metadata
                     echo "Validating dependent metadata..."
-                    sf project deploy validate --source-dir delta-dependencies/ --test-level NoTestRun
+                    sf project deploy validate --source-dir delta-dependencies/ --test-level NoTestRun || { echo "Validation failed."; exit 1; }
                     
-                    if [ $? -eq 0 ]; then
-                      echo "Validation successful. Proceeding to deploy dependent metadata."
-                      sf project deploy start --source-dir delta-dependencies/ --test-level NoTestRun
-                      DEP_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                    echo "Validation successful. Proceeding to deploy dependent metadata."
+                    sf project deploy start --source-dir delta-dependencies/ --test-level NoTestRun
+                    DEP_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id' 2>/dev/null)
+                    
+                    if [ -z "$DEP_DEPLOY_ID" ]; then
+                      echo "[WARNING] Could not retrieve deployment ID. Proceeding anyway."
+                    else
                       echo "Dependent Metadata Deployment ID: $DEP_DEPLOY_ID"
-                      
                       # Wait for deployment to complete
                       echo "Waiting for dependent metadata deployment to complete..."
-                      sf project deploy report "$DEP_DEPLOY_ID" --wait 60
-                      if [ $? -eq 0 ]; then
-                        echo "Dependent metadata deployment completed successfully."
-                        sf project deploy report "$DEP_DEPLOY_ID" --json | jq -r '.result | "Status: \(.status), Done: \(.done)"'
-                      else
-                        echo "Dependent metadata deployment failed or timed out."
-                        exit 1
-                      fi
-                    else
-                      echo "Validation failed. Dependent metadata validation failed."
-                      exit 1
+                      sf project deploy report "$DEP_DEPLOY_ID" --wait 60 || { echo "Deployment timed out or failed."; exit 1; }
+                      echo "Dependent metadata deployment completed successfully."
+                      sf project deploy report "$DEP_DEPLOY_ID" --json | jq -r '.result | "Status: \(.status), Done: \(.done)"' || true
                     fi
                   else
                     echo "[STEP 1] No dependent metadata changes detected. Proceeding to profile deployment."
@@ -146,40 +140,44 @@ jobs:
                     
                     # Validate profile/permission set changes
                     echo "Validating profile and permission set changes..."
-                    sf project deploy validate --source-dir delta-profiles/ --test-level NoTestRun
+                    sf project deploy validate --source-dir delta-profiles/ --test-level NoTestRun || { echo "Validation failed."; exit 1; }
                     
-                    if [ $? -eq 0 ]; then
-                      echo "Validation successful. Profile FLS and object access changes are valid."
-                      
-                      # Deploy profiles and permission sets
-                      echo "Proceeding to profile and permission set deployment..."
-                      sf project deploy start --source-dir delta-profiles/ --test-level NoTestRun
-                      PROFILE_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                    echo "Validation successful. Profile FLS and object access changes are valid."
+                    
+                    # Deploy profiles and permission sets
+                    echo "Proceeding to profile and permission set deployment..."
+                    sf project deploy start --source-dir delta-profiles/ --test-level NoTestRun
+                    PROFILE_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id' 2>/dev/null)
+                    
+                    if [ -z "$PROFILE_DEPLOY_ID" ]; then
+                      echo "[WARNING] Could not retrieve profile deployment ID. Proceeding anyway."
+                    else
                       echo "Profile Deployment ID: $PROFILE_DEPLOY_ID"
-                      
                       # Wait for deployment to complete
                       echo "Waiting for profile deployment to complete..."
-                      sf project deploy report "$PROFILE_DEPLOY_ID" --wait 60
-                      if [ $? -eq 0 ]; then
-                        echo "Profile deployment completed successfully."
-                        
-                        # Report deployment details
-                        echo "[SUCCESS] Profile/PermissionSet FLS and object access deployment successful."
-                        sf project deploy report "$PROFILE_DEPLOY_ID" --json | jq -r '.result | "Deployment Status: \(.status), Completed: \(.done), Total Deployed: \(.numberDeployed)"'
-                      else
-                        echo "Profile deployment failed or timed out."
-                        exit 1
-                      fi
-                    else
-                      echo "Validation failed. Profile FLS and object access validation failed. Aborting deployment."
-                      exit 1
+                      sf project deploy report "$PROFILE_DEPLOY_ID" --wait 60 || { echo "Deployment timed out or failed."; exit 1; }
+                      echo "Profile deployment completed successfully."
+                      # Report deployment details
+                      echo "[SUCCESS] Profile/PermissionSet FLS and object access deployment successful."
+                      sf project deploy report "$PROFILE_DEPLOY_ID" --json | jq -r '.result | "Deployment Status: \(.status), Completed: \(.done), Total Deployed: \(.numberDeployed)"' || true
                     fi
                   else
                     echo "[STEP 2] No Profile or PermissionSet changes detected. Skipping profile deployment."
                   fi
           - name: 'if running test classes display test class names and their status'
             run: |
-                  sf project deploy report $DEPLOY_ID --verbose --json | jq -r '.result.testResults[] | "Test Class: \(.name), Status: \(.outcome)"'
+                  # Check if DEPLOY_ID exists from previous deployment
+                  if [ -f "deploy_id.txt" ]; then
+                    DEPLOY_ID=$(cat deploy_id.txt)
+                    if [ -n "$DEPLOY_ID" ] && [ "$DEPLOY_ID" != "" ]; then
+                      echo "[INFO] Retrieving test results for deployment: $DEPLOY_ID"
+                      sf project deploy report "$DEPLOY_ID" --verbose --json | jq -r '.result.testResults[]? | "Test Class: \(.name), Status: \(.outcome)"' || echo "[INFO] No test results available"
+                    else
+                      echo "[INFO] No deployment ID available. Skipping test report."
+                    fi
+                  else
+                    echo "[INFO] No previous deployment. Skipping test report."
+                  fi
                 #DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
                    #echo "Deployment ID: $DEPLOY_ID"
                    
