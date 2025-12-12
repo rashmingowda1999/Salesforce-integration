@@ -51,7 +51,113 @@ jobs:
                       echo "Validation failed. Deployment aborted."
                       exit 1
                    fi
+          - name: 'Generate delta for dependent metadata (Objects, Custom Fields, Validation Rules)'
+            run: |
+                  # Create output directory for dependent metadata
+                  mkdir -p delta-dependencies
+                  
+                  # Generate delta for metadata that profiles depend on
+                  sf sgd metadata delta --to "HEAD" --from "HEAD~1" --output delta-dependencies/ --source force-app/ --metadata "CustomObject,CustomField,ValidationRule,RecordType"
+                  echo "[INFO] Dependent Metadata Diff generated"
+                  
+                  # List detected changes for visibility
+                  if [ -d "delta-dependencies/force-app/main/default/objects" ]; then
+                    echo "[INFO] Object/Field changes detected"
+                    find delta-dependencies/force-app/main/default/objects -type f -name "*.xml" | head -20
+                  fi
 
+          - name: 'Deploy dependent metadata first (Objects, Fields, Validation Rules)'
+            run: |
+                  # Check if there are dependent metadata changes
+                  if [ -d "delta-dependencies/force-app/main/default/objects" ] || [ -d "delta-dependencies/force-app/main/default/validationrules" ]; then
+                    echo "[STEP 1] Deploying dependent metadata (Objects, Custom Fields, Validation Rules)..."
+                    
+                    # Validate dependent metadata
+                    echo "Validating dependent metadata..."
+                    sf project deploy validate --source-dir delta-dependencies/ --test-level NoTestRun
+                    
+                    if [ $? -eq 0 ]; then
+                      echo "Validation successful. Proceeding to deploy dependent metadata."
+                      sf project deploy start --source-dir delta-dependencies/ --test-level NoTestRun
+                      DEP_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                      echo "Dependent Metadata Deployment ID: $DEP_DEPLOY_ID"
+                      
+                      # Wait for deployment to complete
+                      echo "Waiting for dependent metadata deployment to complete..."
+                      sf project deploy report "$DEP_DEPLOY_ID" --wait 60
+                      if [ $? -eq 0 ]; then
+                        echo "Dependent metadata deployment completed successfully."
+                        sf project deploy report "$DEP_DEPLOY_ID" --json | jq -r '.result | "Status: \(.status), Done: \(.done)"'
+                      else
+                        echo "Dependent metadata deployment failed or timed out."
+                        exit 1
+                      fi
+                    else
+                      echo "Validation failed. Dependent metadata validation failed."
+                      exit 1
+                    fi
+                  else
+                    echo "[STEP 1] No dependent metadata changes detected. Proceeding to profile deployment."
+                  fi
+
+          - name: 'Generate delta for Profile and PermissionSet metadata'
+            run: |
+                  # Create output directory for profile metadata
+                  mkdir -p delta-profiles
+                  
+                  # Generate delta for Profile and PermissionSet only
+                  sf sgd metadata delta --to "HEAD" --from "HEAD~1" --output delta-profiles/ --source force-app/ --metadata "Profile,PermissionSet"
+                  echo "[INFO] Profile/PermissionSet Metadata Diff generated"
+                  
+                  # List detected changes for visibility
+                  if [ -d "delta-profiles/force-app/main/default/profiles" ]; then
+                    echo "[INFO] Profile changes detected:"
+                    find delta-profiles/force-app/main/default/profiles -type f -name "*.profile-meta.xml" | xargs -I {} basename {}
+                  fi
+                  if [ -d "delta-profiles/force-app/main/default/permissionsets" ]; then
+                    echo "[INFO] PermissionSet changes detected:"
+                    find delta-profiles/force-app/main/default/permissionsets -type f -name "*.permissionset-meta.xml" | xargs -I {} basename {}
+                  fi
+
+          - name: 'Deploy Profile and PermissionSet with FLS and Object Access'
+            run: |
+                  # Check if there are profile or permission set changes
+                  if [ -d "delta-profiles/force-app/main/default/profiles" ] || [ -d "delta-profiles/force-app/main/default/permissionsets" ]; then
+                    echo "[STEP 2] Deploying Profile/PermissionSet metadata with FLS and object access changes..."
+                    
+                    # Validate profile/permission set changes
+                    echo "Validating profile and permission set changes..."
+                    sf project deploy validate --source-dir delta-profiles/ --test-level NoTestRun
+                    
+                    if [ $? -eq 0 ]; then
+                      echo "Validation successful. Profile FLS and object access changes are valid."
+                      
+                      # Deploy profiles and permission sets
+                      echo "Proceeding to profile and permission set deployment..."
+                      sf project deploy start --source-dir delta-profiles/ --test-level NoTestRun
+                      PROFILE_DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
+                      echo "Profile Deployment ID: $PROFILE_DEPLOY_ID"
+                      
+                      # Wait for deployment to complete
+                      echo "Waiting for profile deployment to complete..."
+                      sf project deploy report "$PROFILE_DEPLOY_ID" --wait 60
+                      if [ $? -eq 0 ]; then
+                        echo "Profile deployment completed successfully."
+                        
+                        # Report deployment details
+                        echo "[SUCCESS] Profile/PermissionSet FLS and object access deployment successful."
+                        sf project deploy report "$PROFILE_DEPLOY_ID" --json | jq -r '.result | "Deployment Status: \(.status), Completed: \(.done), Total Deployed: \(.numberDeployed)"'
+                      else
+                        echo "Profile deployment failed or timed out."
+                        exit 1
+                      fi
+                    else
+                      echo "Validation failed. Profile FLS and object access validation failed. Aborting deployment."
+                      exit 1
+                    fi
+                  else
+                    echo "[STEP 2] No Profile or PermissionSet changes detected. Skipping profile deployment."
+                  fi
           - name: 'if running test classes display test class names and their status'
             run: |
                   sf project deploy report $DEPLOY_ID --verbose --json | jq -r '.result.testResults[] | "Test Class: \(.name), Status: \(.outcome)"'
