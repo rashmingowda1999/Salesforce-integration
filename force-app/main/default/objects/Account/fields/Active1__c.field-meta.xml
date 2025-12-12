@@ -10,7 +10,7 @@
             <sorted>false</sorted>
             <value>
                 <fullName>No</fullName>
-                <default>yes</default>
+                <default>false</default>
                 <label>No</label>
             </value>
             <value>
