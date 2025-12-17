@@ -5,4 +5,10 @@
     <required>false</required>
     <trackFeedHistory>false</trackFeedHistory>
     <type>Text</type>
+    <length>80</length>
+    <unique>false</unique>
+    <caseSensitive>false</caseSensitive>
+    <externalId>false</externalId>
+    <inlineHelpText></inlineHelpText>
+    <visibleLines>1</visibleLines>
 </CustomField>
