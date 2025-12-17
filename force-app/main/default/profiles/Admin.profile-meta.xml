@@ -15,5 +15,4 @@
         <field>Account.Active3__c</field>
         <readable>true</readable>
     </fieldPermissions>
-
 </Profile>
