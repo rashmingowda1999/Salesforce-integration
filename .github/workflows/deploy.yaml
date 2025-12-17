@@ -24,49 +24,20 @@ jobs:
             run: npm install @salesforce/cli --global
           - name: 'Installing sfdx git delta'
             run: | 
-                sf plugins install sfdx-git-delta
-                sf plugins
-
+                echo Y | sfdx plugins:install sfdx-git-delta
+                sfdx plugins
           - name: 'Create delta packages'
             run: | 
                 mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ || true
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
                 echo "[INFO] Diff generated"
-                # Verify delta packages exist
-                if [ -d "changed-sources/force-app" ]; then
-                  echo "[INFO] Delta packages created successfully"
-                else
-                  echo "[WARNING] No delta changes detected or delta output structure differs"
-                fi
-
-          - name: 'validate deployment before deploying, deploy only if validation is successful'
+                
+          - name: 'Deploy to environment with running all local tests'
             run: |
-                   echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                   sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                   
-                   # Check if there are delta changes to deploy
-                   if [ ! -d "changed-sources/force-app" ]; then
-                     echo "[WARNING] No delta changes detected in the commit. Skipping main source deployment."
-                     echo "DEPLOY_ID=" > deploy_id.txt
-                     exit 0
-                   fi
-                   
-                   echo "[INFO] Delta changes detected. Proceeding with validation and deployment."
-                   sf project deploy validate --source-dir changed-sources/force-app --test-level RunLocalTests
-                   
-                   DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
-                   echo "VALIDATION ID: $DEPLOY_ID"
-                   if [ $? -eq 0 ]
-                   then 
-                      echo "Validation successful. Proceeding to deployment."
-                      sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
-                      DEPLOY_ID=$(sf project deploy list --status InProgress --json | jq -r '.result[0].id')
-                      echo "Deployment ID: $DEPLOY_ID"
-                      echo "$DEPLOY_ID" > deploy_id.txt
-                   else 
-                      echo "Validation failed. Deployment aborted."
-                      exit 1
-                   fi
+                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+
           - name: 'Generate delta for dependent metadata (Objects, Custom Fields, Validation Rules)'
             run: |
                   # Create output directory for dependent metadata
