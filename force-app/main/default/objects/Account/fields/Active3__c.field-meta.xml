@@ -4,5 +4,5 @@
     <label>Active31</label>
     <required>false</required>
     <trackFeedHistory>false</trackFeedHistory>
-    <type>text</type>
+    <type>Text</type>
 </CustomField>
