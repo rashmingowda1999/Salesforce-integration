@@ -58,11 +58,11 @@ jobs:
             run: | 
                 echo Y | sfdx plugins:install sfdx-git-delta
                 sfdx plugins
-                
+
           - name: 'Create delta packages for destructive changes'
             run: | 
                 mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
                 echo "[INFO] Diff generated for destructive changes"
       
           - name: 'Deploy destructive changes to environment'
