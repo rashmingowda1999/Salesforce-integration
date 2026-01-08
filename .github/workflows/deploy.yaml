@@ -43,7 +43,6 @@ jobs:
       runs-on: ubuntu-latest
       environment: dev
       steps:
-        steps:
           - uses: actions/setup-node@v3
             with:
               node-version: '18'
@@ -57,7 +56,7 @@ jobs:
                 mkdir changed-sources
                 sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
                 echo "[INFO] Diff generated for destructive changes"
-                
+
           # Now Install Salesforce CLI
           - name: 'Install sfdx'
             run: npm install @salesforce/cli --global
