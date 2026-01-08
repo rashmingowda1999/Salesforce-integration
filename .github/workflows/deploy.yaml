@@ -82,7 +82,13 @@ jobs:
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start --source-dir changed-sources/force-app --ignore-errors
+                if [ -d changed-sources/force-app ]; then
+                  sf project deploy start --source-dir changed-sources/force-app --ignore-errors
+                elif [ -f changed-sources/destructiveChanges.xml ]; then
+                  sf project deploy start --manifest changed-sources/destructiveChanges.xml --ignore-errors
+                else
+                  echo "No deployable source or destructiveChanges.xml found."
+                fi
           - name: 'Deploy post-destructive changes to environment'
             if: success()  # Only run if previous steps succeeded
             run: |
