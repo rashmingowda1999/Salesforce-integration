@@ -38,8 +38,21 @@ jobs:
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                 sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
 
+          - name: 'Deploy post-destructive changes to environment'
+            if: success()  # Only run if previous steps succeeded
+            run: |
+              if [ -f changed-sources/destructiveChangesPost.xml ]; then
+                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                sf project deploy start \
+                  --manifest changed-sources/destructiveChangesPost.xml \
+                  --ignore-errors
+              else
+                echo "No destructiveChangesPost.xml found. Skipping post-destructive deployment."
+              fi
+
   Post-destructive-changes:
-      needs: Deploy-to-dev-environment
+      #needs: Deploy-to-dev-environment
       runs-on: ubuntu-latest
       environment: dev
       steps:
@@ -70,3 +83,15 @@ jobs:
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                 sf project deploy start --source-dir changed-sources/force-app --ignore-errors
+          - name: 'Deploy post-destructive changes to environment'
+            if: success()  # Only run if previous steps succeeded
+            run: |
+              if [ -f changed-sources/destructiveChangesPost.xml ]; then
+                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                sf project deploy start \
+                  --manifest changed-sources/destructiveChangesPost.xml \
+                  --ignore-errors
+              else
+                echo "No destructiveChangesPost.xml found. Skipping post-destructive deployment."
+              fi
