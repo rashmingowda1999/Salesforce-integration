@@ -38,18 +38,19 @@ jobs:
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                 sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
 
-  #Profile-deployment:
+  Post-destructive-changes:
       #needs: Deploy-to-dev-environment
-      #runs-on: ubuntu-latest
-      #steps:
-        #- name: 'Generate delta for dependent metadata (Objects, Custom Fields, Validation Rules)'
-          #run: |
-                #!/bin/bash
-
-                # 1. Generate delta for dependent metadata (objects, fields, etc.)
-                    #sf sgd source delta --to "HEAD" --from "HEAD~1" --output delta-dependencies/ --source force-app/ --metadata "CustomObject,CustomField,ValidationRule,RecordType" || true
-
-
-        #- name: 'profile deployment for dependent metadata'
-          #run: |
-              
+      runs-on: ubuntu-latest
+      environment: dev
+      steps:
+          - name: 'Create delta packages for destructive changes'
+            run: | 
+                mkdir changed-sources
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
+                echo "[INFO] Diff generated for destructive changes"
+                
+          - name: 'Deploy destructive changes to environment'
+            run: |
+                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+                sf project deploy start --source-dir changed-sources/force-app --ignore-errors
