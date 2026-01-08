@@ -92,12 +92,12 @@ jobs:
           - name: 'Deploy post-destructive changes to environment'
             if: success()  # Only run if previous steps succeeded
             run: |
-              if [ -f changed-sources/destructiveChangesPost.xml ]; then
+              if [ -f changed-sources/destructiveChanges.xml ]; then
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
                 sf project deploy start \
-                  --manifest changed-sources/destructiveChangesPost.xml \
+                  --manifest changed-sources/destructiveChanges.xml \
                   --ignore-errors
               else
-                echo "No destructiveChangesPost.xml found. Skipping post-destructive deployment."
+                echo "No destructiveChanges.xml found. Skipping post-destructive deployment."
               fi
