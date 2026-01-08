@@ -39,16 +39,33 @@ jobs:
                 sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
 
   Post-destructive-changes:
-      #needs: Deploy-to-dev-environment
+      needs: Deploy-to-dev-environment
       runs-on: ubuntu-latest
       environment: dev
       steps:
+        steps:
+          - uses: actions/setup-node@v3
+            with:
+              node-version: '18'
+          - name: 'Checkout source code'
+            uses: actions/checkout@v3
+            with:
+              fetch-depth: '2'
+
           - name: 'Create delta packages for destructive changes'
             run: | 
                 mkdir changed-sources
                 sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
                 echo "[INFO] Diff generated for destructive changes"
                 
+          # Now Install Salesforce CLI
+          - name: 'Install sfdx'
+            run: npm install @salesforce/cli --global
+          - name: 'Installing sfdx git delta'
+            run: | 
+                echo Y | sfdx plugins:install sfdx-git-delta
+                sfdx plugins
+      
           - name: 'Deploy destructive changes to environment'
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
