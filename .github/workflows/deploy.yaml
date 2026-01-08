@@ -51,12 +51,6 @@ jobs:
             with:
               fetch-depth: '2'
 
-          - name: 'Create delta packages for destructive changes'
-            run: | 
-                mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
-                echo "[INFO] Diff generated for destructive changes"
-
           # Now Install Salesforce CLI
           - name: 'Install sfdx'
             run: npm install @salesforce/cli --global
@@ -64,6 +58,12 @@ jobs:
             run: | 
                 echo Y | sfdx plugins:install sfdx-git-delta
                 sfdx plugins
+                
+          - name: 'Create delta packages for destructive changes'
+            run: | 
+                mkdir changed-sources
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/ --destructive
+                echo "[INFO] Diff generated for destructive changes"
       
           - name: 'Deploy destructive changes to environment'
             run: |
