@@ -1,8 +1,8 @@
 
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>Active3__c</fullName>
-    <label>Active3</label>
+    <fullName>Active4__c</fullName>
+    <label>Active4</label>
 
     <!-- Documentation for admins and users -->
     <description>Indicates the custom active status (v3). Examples: ACTIVE, INACTIVE, PENDING.</description>

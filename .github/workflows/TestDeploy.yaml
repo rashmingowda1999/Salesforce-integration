@@ -33,6 +33,19 @@ jobs:
             mkdir changed-sources
             sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
             echo "[INFO] Diff generated"
+            # Debug: List contents to verify destructive changes
+            echo "Contents of changed-sources/:"
+            ls -la changed-sources/
+            if [ -f changed-sources/destructiveChanges.xml ]; then
+              echo "destructiveChanges.xml contents:"
+              cat changed-sources/destructiveChanges.xml
+            else
+              echo "No destructiveChanges.xml generated. Check if deletions were detected."
+            fi
+            if [ -f changed-sources/destructiveChangesPost.xml ]; then
+              echo "destructiveChangesPost.xml contents:"
+              cat changed-sources/destructiveChangesPost.xml
+            fi
 
       # Authenticate once and set default (reused across steps)
       - name: 'Authenticate with Salesforce'
@@ -44,10 +57,11 @@ jobs:
       - name: 'Pre-Destructive Validation and Backup'
         if: hashFiles('changed-sources/destructiveChanges.xml') != '' || hashFiles('changed-sources/destructiveChangesPost.xml') != ''
         run: |
-          # Example: Query and backup data related to components being deleted
-          sf data query --query "SELECT Id, Name FROM MyCustomObject__c LIMIT 10" --result-format json > pre_deployment_backup.json
+          # Example: Query and backup data related to components being deleted (customize for fields)
+          # For custom fields, query the parent object if possible
+          sf data query --query "SELECT Id FROM MyObject__c LIMIT 10" --result-format json > pre_deployment_backup.json
           echo "[INFO] Pre-destructive backup created. Check pre_deployment_backup.json for data."
-          # Add custom validations, e.g., check for dependencies
+          # Add custom validations, e.g., check for dependencies on the field
           # sf apex run test --tests MyValidationTestClass --result-format human  # Optional: Run specific validation tests
 
       # Main Deployment: Deploy updates/adds with tests
@@ -60,8 +74,10 @@ jobs:
         if: success() && (hashFiles('changed-sources/destructiveChanges.xml') != '' || hashFiles('changed-sources/destructiveChangesPost.xml') != '')
         run: |
           if [ -f changed-sources/destructiveChangesPost.xml ]; then
+            echo "Deploying post-destructive changes from destructiveChangesPost.xml"
             sf project deploy start --destructive-changes changed-sources/destructiveChangesPost.xml --ignore-errors
           elif [ -f changed-sources/destructiveChanges.xml ]; then
+            echo "Deploying destructive changes from destructiveChanges.xml"
             sf project deploy start --destructive-changes changed-sources/destructiveChanges.xml --ignore-errors
           else
             echo "No destructive changes manifest found. Skipping."
