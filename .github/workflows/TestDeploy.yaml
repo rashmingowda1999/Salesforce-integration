@@ -1,0 +1,103 @@
+name: Deploy to dev environment on push to main
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'force-app/**'
+
+jobs:
+  Deploy-to-dev-environment:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: 'Checkout source code'
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: '2'
+                
+      # Install Salesforce CLI
+      - name: 'Install Salesforce CLI'
+        run: npm install @salesforce/cli --global
+      - name: 'Install sfdx git delta plugin'
+        run: | 
+            echo Y | sf plugins install sfdx-git-delta
+            sf plugins
+      - name: 'Create delta packages'
+        run: | 
+            mkdir changed-sources
+            sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
+            echo "[INFO] Diff generated"
+                
+      - name: 'Deploy to environment with running all local tests'
+        run: |
+            echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+            sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+            sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+
+      - name: 'Deploy post-destructive changes to environment'
+        if: success()  # Only run if previous steps succeeded
+        run: |
+          if [ -f changed-sources/destructiveChangesPost.xml ]; then
+            echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+            sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+            sf project deploy start \
+              --destructive-changes changed-sources/destructiveChangesPost.xml \
+              --ignore-errors
+          else
+            echo "No destructiveChangesPost.xml found. Skipping post-destructive deployment."
+          fi
+
+  Post-destructive-changes:
+    # needs: Deploy-to-dev-environment  # Uncomment if you want this job to depend on the first one
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: 'Checkout source code'
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: '2'
+
+      # Install Salesforce CLI
+      - name: 'Install Salesforce CLI'
+        run: npm install @salesforce/cli --global
+      - name: 'Install sfdx git delta plugin'
+        run: | 
+            echo Y | sf plugins install sfdx-git-delta
+            sf plugins
+
+      - name: 'Create delta packages for destructive changes'
+        run: | 
+            mkdir changed-sources
+            sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
+            echo "[INFO] Diff generated for destructive changes"
+      
+      - name: 'Deploy destructive changes to environment'
+        run: |
+            echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+            sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+            if [ -d changed-sources/force-app ]; then
+              sf project deploy start --source-dir changed-sources/force-app --ignore-errors
+            elif [ -f changed-sources/destructiveChanges.xml ]; then
+              sf project deploy start --destructive-changes changed-sources/destructiveChanges.xml --ignore-errors
+            else
+              echo "No deployable source or destructiveChanges.xml found."
+            fi
+      - name: 'Deploy post-destructive changes to environment'
+        if: success()  # Only run if previous steps succeeded
+        run: |
+          if [ -f changed-sources/destructiveChanges.xml ]; then
+            echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+            sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+            sf project deploy start \
+              --destructive-changes changed-sources/destructiveChanges.xml \
+              --ignore-errors
+          else
+            echo "No destructiveChanges.xml found. Skipping post-destructive deployment."
+          fi
