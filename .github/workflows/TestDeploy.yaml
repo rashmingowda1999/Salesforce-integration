@@ -36,6 +36,15 @@ jobs:
             # Debug: List contents to verify destructive changes
             echo "Contents of changed-sources/:"
             ls -la changed-sources/
+            echo "======================================"
+            echo "Changed Components (package.xml):"
+            echo "======================================"
+            if [ -f changed-sources/package.xml ]; then
+              cat changed-sources/package.xml
+            else
+              echo "No package.xml generated (no additions/updates detected)."
+            fi
+            echo "======================================"
             if [ -f changed-sources/destructiveChanges.xml ]; then
               echo "destructiveChanges.xml contents:"
               cat changed-sources/destructiveChanges.xml
