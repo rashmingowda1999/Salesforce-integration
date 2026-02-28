@@ -1,23 +1,40 @@
 @isTest
 private class TestAccountDescriptionUpdater {
 
+    /**
+     * Common test data created once for all methods in this class.
+     */
+    @testSetup
+    static void setupData() {
+        Account acc = new Account(Name = 'Test Account', Description = 'Original Description');
+        insert acc;
+    }
+
     @isTest
     static void testUpdateAccountDescription() {
-        // 1. Create Test Data1
-        // Create an Account record to test with
-        Account testAccount = new Account(Name = 'Test Account', Description = 'Original Description');
-        insert testAccount;
+        Account acc = [SELECT Id, Description FROM Account LIMIT 1];
+        String newDesc = 'New Updated Description';
 
-        // 2. Call the Method to Test11
-        // Call the method from the main class
-        String updatedDescription = 'New Updated Description';
-        AccountDescriptionUpdater.updateAccountDescription(testAccount.Id, updatedDescription);
+        Test.startTest();
+        AccountDescriptionUpdater.updateAccountDescription(acc.Id, newDesc);
+        Test.stopTest();
 
-        // 3. Verify Results11
-        // Retrieve the updated Account records
-        Account updatedAcc = [SELECT Id, Description FROM Account WHERE Id = :testAccount.Id];
+        acc = [SELECT Id, Description FROM Account WHERE Id = :acc.Id];
+        System.assertEquals(newDesc, acc.Description, 'Description should be updated');
+    }
 
-        // Assert that the Description was updated correctly
-        System.assertEquals(updatedDescription, updatedAcc.Description, 'Account description should be updated.');
+    @isTest
+    static void testUpdateNonexistentAccount() {
+        Id bogusId = Id.valueOf('001000000000000AAD');
+
+        Test.startTest();
+        try {
+            AccountDescriptionUpdater.updateAccountDescription(bogusId, 'irrelevant');
+            System.assert(false, 'Expected exception due to missing Account');
+        } catch (Exception e) {
+            System.assert(e.getMessage().contains('List has no rows'), 'Unexpected error: ' + e.getMessage());
+        }
+        Test.stopTest();
     }
 }
+
