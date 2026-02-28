@@ -1,103 +1,159 @@
-name: Deploy to dev environment on push to main
+name: Deploy to DEV on push to main
 
 on:
   push:
     branches:
-    paths:
-      
+      - main
 
 jobs:
-  Deploy-to-dev-environment:
-      runs-on: ubuntu-latest
-      environment: dev
-      steps:
-          - uses: actions/setup-node@v3
-            with:
-              node-version: '18'
-          - name: 'Checkout source code'
-            uses: actions/checkout@v3
-            with:
-              fetch-depth: '2'
-                
-          # Now Install Salesforce CLI
-          - name: 'Install sfdx'
-            run: npm install @salesforce/cli --global
-          - name: 'Installing sfdx git delta'
-            run: | 
-                echo Y | sfdx plugins:install sfdx-git-delta
-                sfdx plugins
-          - name: 'Create delta packages'
-            run: | 
-                mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
-                echo "[INFO] Diff generated"
-                
-          - name: 'Deploy to environment with running all local tests'
-            run: |
-                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
 
-          - name: 'Deploy post-destructive changes to environment'
-            if: success()  # Only run if previous steps succeeded
-            run: |
-              if [ -f changed-sources/destructiveChangesPost.xml ]; then
-                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start \
-                  --manifest changed-sources/destructiveChangesPost.xml \
-                  --ignore-errors
-              else
-                echo "No destructiveChangesPost.xml found. Skipping post-destructive deployment."
-              fi
+    env:
+      DELTA_DIR: changed-sources
 
-  Post-destructive-changes:
-      #needs: Deploy-to-dev-environment
-      runs-on: ubuntu-latest
-      environment: dev
-      steps:
-          - uses: actions/setup-node@v3
-            with:
-              node-version: '18'
-          - name: 'Checkout source code'
-            uses: actions/checkout@v3
-            with:
-              fetch-depth: '2'
+    steps:
 
-          # Now Install Salesforce CLI
-          - name: 'Install sfdx'
-            run: npm install @salesforce/cli --global
-          - name: 'Installing sfdx git delta'
-            run: | 
-                echo Y | sfdx plugins:install sfdx-git-delta
-                sfdx plugins
+      # ========================================
+      # 1️⃣ Checkout
+      # ========================================
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-          - name: 'Create delta packages for destructive changes'
-            run: | 
-                mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
-                echo "[INFO] Diff generated for destructive changes"
-      
-          - name: 'Deploy destructive changes to environment'
-            run: |
-                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                if [ -d changed-sources/force-app ]; then
-                  sf project deploy start --source-dir changed-sources/force-app --ignore-errors
-                elif [ -f changed-sources/destructiveChanges.xml ]; then
-                  sf project deploy start --manifest changed-sources/destructiveChanges.xml --ignore-errors
-                else
-                  echo "No deployable source or destructiveChanges.xml found."
-                fi
-          - name: 'Deploy post-destructive changes to environment'
-            if: success()  # Only run if previous steps succeeded
-            run: |
-              if [ -f changed-sources/destructiveChanges.xml ]; then
-                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start \
-                  --manifest changed-sources/destructiveChanges.xml \
-                  --ignore-errors
-              else
-                echo "No destructiveChanges.xml found. Skipping post-destructive deployment."
-              fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # ========================================
+      # 2️⃣ Install Salesforce CLI + Plugins
+      # ========================================
+      - name: Install Salesforce CLI
+        run: |
+          npm install --global @salesforce/cli
+          sf plugins install sfdx-git-delta
+          sf --version
+
+      # ========================================
+      # 3️⃣ Authenticate (JWT)
+      # ========================================
+      - name: Authenticate to DEV
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          sf org login jwt \
+            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --jwt-key-file server.key \
+            --client-id ${{ secrets.CONSUMER_KEY }} \
+            --instance-url ${{ vars.INSTANCE_URL }} \
+            --set-default
+
+      # ========================================
+      # 4️⃣ Generate Delta + Destructive
+      # ========================================
+      - name: Generate Delta Package
+        run: |
+          mkdir $DELTA_DIR
+          sf sgd source delta \
+            --to HEAD \
+            --from HEAD~1 \
+            --output-dir $DELTA_DIR \
+            --generate-delta \
+            --source force-app
+
+          echo "Delta generation completed."
+
+      # ========================================
+      # 5️⃣ Detect Apex Changes
+      # ========================================
+      - name: Detect Apex Changes
+        id: apexcheck
+        run: |
+          COUNT=$(find $DELTA_DIR -name "*.cls" | wc -l)
+          echo "apexCount=$COUNT" >> $GITHUB_OUTPUT
+          echo "Apex files changed: $COUNT"
+
+      # ========================================
+      # 6️⃣ VALIDATE FIRST (Dry Run)
+      # ========================================
+      - name: Validate Deployment
+        id: validate
+        run: |
+
+          if [ "${{ steps.apexcheck.outputs.apexCount }}" -gt 0 ]; then
+            TEST_FLAG="--test-level RunLocalTests"
+          else
+            TEST_FLAG="--test-level NoTestRun"
+          fi
+
+          if [ -f $DELTA_DIR/destructiveChanges/destructiveChanges.xml ]; then
+            sf project deploy start \
+              --manifest $DELTA_DIR/package/package.xml \
+              --pre-destructive-changes $DELTA_DIR/destructiveChanges/destructiveChanges.xml \
+              --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+              $TEST_FLAG \
+              --dry-run \
+              --json > result.json
+          else
+            sf project deploy start \
+              --manifest $DELTA_DIR/package/package.xml \
+              --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+              $TEST_FLAG \
+              --dry-run \
+              --json > result.json
+          fi
+
+      # ========================================
+      # 7️⃣ Enforce 80% Code Coverage
+      # ========================================
+      - name: Enforce 80% Coverage
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          COVERAGE=$(jq '.result.details.runTestResult.codeCoverage | map(.numLocationsCovered / .numLocations * 100) | add / length' result.json)
+          echo "Org Coverage: $COVERAGE"
+
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "Code coverage below 80%. Failing pipeline."
+            exit 1
+          fi
+
+      # ========================================
+      # 8️⃣ Deploy PRE Destructive (If Exists)
+      # ========================================
+      - name: Deploy Pre-Destructive Changes
+        if: success() && hashFiles('changed-sources/destructiveChanges/destructiveChanges.xml') != ''
+        run: |
+          sf project deploy start \
+            --pre-destructive-changes $DELTA_DIR/destructiveChanges/destructiveChanges.xml \
+            --manifest $DELTA_DIR/package/package.xml \
+            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }}
+
+      # ========================================
+      # 9️⃣ Deploy Metadata
+      # ========================================
+      - name: Deploy Metadata
+        if: success()
+        run: |
+
+          if [ "${{ steps.apexcheck.outputs.apexCount }}" -gt 0 ]; then
+            TEST_FLAG="--test-level RunLocalTests"
+          else
+            TEST_FLAG="--test-level NoTestRun"
+          fi
+
+          sf project deploy start \
+            --manifest $DELTA_DIR/package/package.xml \
+            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            $TEST_FLAG
+
+      # ========================================
+      # 🔟 Deploy POST Destructive (If Exists)
+      # ========================================
+      - name: Deploy Post-Destructive Changes
+        if: success() && hashFiles('changed-sources/destructiveChangesPost.xml') != ''
+        run: |
+          sf project deploy start \
+            --post-destructive-changes $DELTA_DIR/destructiveChangesPost.xml \
+            --manifest $DELTA_DIR/package/package.xml \
+            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }}
