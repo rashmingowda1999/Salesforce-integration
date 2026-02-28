@@ -28,13 +28,13 @@ jobs:
           node-version: 18
 
       # ========================================
-      # 2️⃣ Install Salesforce CLI + Plugins
+      # 2️⃣ Install CLI + Plugin
       # ========================================
       - name: Install Salesforce CLI
         run: |
           npm install --global @salesforce/cli
-          sf plugins install sfdx-git-delta
-          sf --version
+          echo y | sfdx plugins:install sfdx-git-delta
+          sfdx plugins
 
       # ========================================
       # 3️⃣ Authenticate (JWT)
@@ -50,15 +50,16 @@ jobs:
             --set-default
 
       # ========================================
-      # 4️⃣ Generate Delta + Destructive
+      # 4️⃣ Generate Delta
       # ========================================
       - name: Generate Delta Package
         run: |
           mkdir $DELTA_DIR
+
           sfdx sgd:source:delta \
-            --to HEAD \
-            --from HEAD~1 \
-            --output-dir $DELTA_DIR \
+            --to "HEAD" \
+            --from "HEAD~1" \
+            --output "$DELTA_DIR" \
             --generate-delta \
             --source force-app
 
@@ -75,7 +76,7 @@ jobs:
           echo "Apex files changed: $COUNT"
 
       # ========================================
-      # 6️⃣ VALIDATE FIRST (Dry Run)
+      # 6️⃣ Validate First (Dry Run)
       # ========================================
       - name: Validate Deployment
         id: validate
@@ -94,46 +95,20 @@ jobs:
               --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
               $TEST_FLAG \
               --dry-run \
-              --json > result.json
+              --json > validate-result.json
           else
             sf project deploy start \
               --manifest $DELTA_DIR/package/package.xml \
               --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
               $TEST_FLAG \
               --dry-run \
-              --json > result.json
+              --json > validate-result.json
           fi
 
       # ========================================
-      # 7️⃣ Enforce 80% Code Coverage
-      # ========================================
-      - name: Enforce 80% Coverage
-        if: steps.apexcheck.outputs.apexCount > 0
-        run: |
-          COVERAGE=$(jq '.result.details.runTestResult.codeCoverage | map(.numLocationsCovered / .numLocations * 100) | add / length' result.json)
-          echo "Org Coverage: $COVERAGE"
-
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "Code coverage below 80%. Failing pipeline."
-            exit 1
-          fi
-
-      # ========================================
-      # 8️⃣ Deploy PRE Destructive (If Exists)
-      # ========================================
-      - name: Deploy Pre-Destructive Changes
-        if: success() && hashFiles('changed-sources/destructiveChanges/destructiveChanges.xml') != ''
-        run: |
-          sf project deploy start \
-            --pre-destructive-changes $DELTA_DIR/destructiveChanges/destructiveChanges.xml \
-            --manifest $DELTA_DIR/package/package.xml \
-            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }}
-
-      # ========================================
-      # 9️⃣ Deploy Metadata
+      # 7️⃣ Deploy After Validation
       # ========================================
       - name: Deploy Metadata
-        if: success()
         run: |
 
           if [ "${{ steps.apexcheck.outputs.apexCount }}" -gt 0 ]; then
@@ -142,13 +117,88 @@ jobs:
             TEST_FLAG="--test-level NoTestRun"
           fi
 
-          sf project deploy start \
-            --manifest $DELTA_DIR/package/package.xml \
-            --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
-            $TEST_FLAG
+          if [ -f $DELTA_DIR/destructiveChanges/destructiveChanges.xml ]; then
+            sf project deploy start \
+              --manifest $DELTA_DIR/package/package.xml \
+              --pre-destructive-changes $DELTA_DIR/destructiveChanges/destructiveChanges.xml \
+              --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+              $TEST_FLAG \
+              --json > deploy-result.json
+          else
+            sf project deploy start \
+              --manifest $DELTA_DIR/package/package.xml \
+              --target-org ${{ secrets.DEPLOYMENT_USER_NAME }} \
+              $TEST_FLAG \
+              --json > deploy-result.json
+          fi
 
       # ========================================
-      # 🔟 Deploy POST Destructive (If Exists)
+      # 8️⃣ Display Test Classes Executed
+      # ========================================
+      - name: Display Test Classes Executed
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          echo "=============================="
+          echo "Test Classes Executed:"
+          echo "=============================="
+
+          jq -r '.result.details.runTestResult.tests[].name' deploy-result.json | sort | uniq
+
+      # ========================================
+      # 9️⃣ Display Test Methods Executed
+      # ========================================
+      - name: Display Test Methods Executed
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          echo "=============================="
+          echo "Test Methods:"
+          echo "=============================="
+
+          jq -r '.result.details.runTestResult.tests[] | "\(.name) -> \(.methodName)"' deploy-result.json
+
+      # ========================================
+      # 🔟 Display Coverage Per Class
+      # ========================================
+      - name: Display Coverage Per Apex Class
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          echo "=============================="
+          echo "Coverage Per Apex Class:"
+          echo "=============================="
+
+          jq -r '
+            .result.details.runTestResult.codeCoverage[] |
+            "\(.name): \((.numLocationsCovered / .numLocations * 100 | floor))%"
+          ' deploy-result.json
+
+      # ========================================
+      # 1️⃣1️⃣ Display Org-Wide Coverage
+      # ========================================
+      - name: Display Org-Wide Coverage
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          COVERAGE=$(jq '.result.details.runTestResult.summary.orgWideCoverage' deploy-result.json)
+          echo "================================="
+          echo "Salesforce Org-Wide Coverage: $COVERAGE %"
+          echo "================================="
+
+      # ========================================
+      # 1️⃣2️⃣ Enforce 80% Coverage
+      # ========================================
+      - name: Enforce Minimum 80% Coverage
+        if: steps.apexcheck.outputs.apexCount > 0
+        run: |
+          COVERAGE=$(jq '.result.details.runTestResult.summary.orgWideCoverage' deploy-result.json)
+
+          if [ "$COVERAGE" -lt 80 ]; then
+            echo "❌ Coverage below 80%. Failing pipeline."
+            exit 1
+          else
+            echo "✅ Coverage requirement met."
+          fi
+
+      # ========================================
+      # 1️⃣3️⃣ Deploy Post-Destructive (If Exists)
       # ========================================
       - name: Deploy Post-Destructive Changes
         if: success() && hashFiles('changed-sources/destructiveChangesPost.xml') != ''
