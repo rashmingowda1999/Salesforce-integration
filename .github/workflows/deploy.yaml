@@ -55,7 +55,7 @@ jobs:
       - name: Generate Delta Package
         run: |
           mkdir $DELTA_DIR
-          sf sgd source delta \
+          sfdx sgd:source:delta \
             --to HEAD \
             --from HEAD~1 \
             --output-dir $DELTA_DIR \
