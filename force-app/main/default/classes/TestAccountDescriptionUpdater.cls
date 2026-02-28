@@ -14,7 +14,7 @@ private class TestAccountDescriptionUpdater {
         AccountDescriptionUpdater.updateAccountDescription(testAccount.Id, updatedDescription);
 
         // 3. Verify Results11
-        // Retrieve the updated Account record
+        // Retrieve the updated Account records
         Account updatedAcc = [SELECT Id, Description FROM Account WHERE Id = :testAccount.Id];
 
         // Assert that the Description was updated correctly
