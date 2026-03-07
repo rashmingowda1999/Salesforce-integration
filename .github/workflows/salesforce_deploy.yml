@@ -47,10 +47,10 @@ jobs:
           chmod +x scripts/deploy/generate_delta.sh
           scripts/deploy/generate_delta.sh
 
-      - name: Backup changed components
+      - name: Backup metadata
         run: |
-          chmod +x scripts/deploy/backup_changed.sh
-          scripts/deploy/backup_changed.sh
+          chmod +x scripts/deploy/backup.sh
+          scripts/deploy/backup.sh
 
       - name: Prepare destructive changes
         run: |
@@ -80,8 +80,22 @@ jobs:
           chmod +x scripts/deploy/validate_quickdeploy.sh
           scripts/deploy/validate_quickdeploy.sh --quickdeploy ${{ steps.validate.outputs.request_id }}
 
+      - name: Package backup artifact
+        id: package_backup
+        run: |
+          TODAY=$(date +%F)
+          DATED_DIR="Backup/$TODAY"
+          if [ -d "$DATED_DIR" ]; then
+            TAR_NAME="deployment-backup-${{ github.sha }}-$TODAY.tar.gz"
+            tar -C Backup -czf "$TAR_NAME" "$TODAY"
+            echo "tar_name=$TAR_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "tar_name=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload backup artifact
+        if: steps.package_backup.outputs.tar_name != ''
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-backup-${{ github.sha }}
-          path: backup/
+          name: ${{ steps.package_backup.outputs.tar_name }}
+          path: ${{ steps.package_backup.outputs.tar_name }}
