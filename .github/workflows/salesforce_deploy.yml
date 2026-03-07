@@ -11,10 +11,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY}}
-      SF_USERNAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
-      SF_INSTANCE_URL: ${{ vars.INSTANCE_URL}}
-      SF_JWT_KEY: ${{ secrets.JWT_SERVER_KEY }}
       MIN_COVERAGE: 85
     steps:
       - name: Checkout
@@ -35,14 +31,11 @@ jobs:
             echo Y | sf plugins install sfdx-git-delta
             sf plugins
 
-      - name: Create JWT key file
-        run: |
-          echo "${{ secrets.SF_JWT_KEY }}" >> jwt.key
-
       - name: Authenticate to org (JWT)
-        id: auth
         run: |
-          sf auth jwt grant --client-id "$SF_CLIENT_ID" --jwt-key-file jwt.key --username "$SF_USERNAME" --instance-url "$SF_INSTANCE_URL"
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
+
 
       - name: Generate delta package
         run: |
