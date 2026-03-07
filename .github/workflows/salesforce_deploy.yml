@@ -13,7 +13,7 @@ jobs:
     env:
       SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY}}
       SF_USERNAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
-      SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL}}
+      SF_INSTANCE_URL: ${{ vars.INSTANCE_URL}}
       SF_JWT_KEY: ${{ secrets.JWT_SERVER_KEY }}
       MIN_COVERAGE: 85
     steps:
