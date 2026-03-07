@@ -12,9 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY}}
-      SF_USERNAME: ${{ secrets.SDEPLOYMENT_USER_NAME }}
+      SF_USERNAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
       SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL}}
-      SF_JWT_KEY_B64: ${{ secrets.SJWT_SERVER_KEY }}
+      SF_JWT_KEY_B64: ${{ secrets.JWT_SERVER_KEY }}
       MIN_COVERAGE: 85
     steps:
       - name: Checkout
