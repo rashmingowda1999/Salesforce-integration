@@ -13,7 +13,7 @@
     <length>20</length>
     <required>false</required>
 
-    <!-- Explicit flags for clarity/consistency11 -->
+    <!-- Explicit flags for clarity/consistency1 -->
     <unique>false</unique>
     <caseSensitive>false</caseSensitive>
     <externalId>false</externalId>
