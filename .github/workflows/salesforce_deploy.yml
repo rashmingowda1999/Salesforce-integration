@@ -14,7 +14,7 @@ jobs:
       SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY}}
       SF_USERNAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
       SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL }}
-      SF_JWT_KEY_B64: ${{ secrets.JWT_SERVER_KEY }}
+      SF_JWT_KEY: ${{ secrets.JWT_SERVER_KEY }}
       MIN_COVERAGE: 85
     steps:
       - name: Checkout
@@ -37,7 +37,7 @@ jobs:
 
       - name: Create JWT key file
         run: |
-          echo "$SF_JWT_KEY_B64" | base64 --decode > jwt.key
+          echo "${{ secrets.SF_JWT_KEY }}" >> jwt.key
 
       - name: Authenticate to org (JWT)
         id: auth
