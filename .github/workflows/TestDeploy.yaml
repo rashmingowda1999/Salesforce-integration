@@ -2,7 +2,7 @@ name: Deploy to dev environment on push to main
 
 on:
   push:
-    orkflow_dispatch:
+    workflow_dispatch:
 
 jobs:
   Deploy-to-dev-environment:

@@ -28,10 +28,16 @@ jobs:
       - name: Install sfdx-git-delta (npx will use this if not installed)
         run: npm install -g sfdx-git-delta || true
 
-      - name: Setup Salesforce CLI
-        uses: salesforce/setup-sfdx@v2
-        with:
-          version: latest
+      - name: Install Salesforce CLI
+        run: |
+          # Install official Salesforce CLI package; fall back to legacy sfdx-cli if needed
+          npm install -g @salesforce/cli || npm install -g sfdx-cli
+          # Verify installation
+          if command -v sf >/dev/null 2>&1; then
+            sf --version
+          else
+            sfdx --version || true
+          fi
 
       - name: Create JWT key file
         run: |
