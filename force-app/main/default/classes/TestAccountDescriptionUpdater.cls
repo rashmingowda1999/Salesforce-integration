@@ -25,13 +25,16 @@ private class TestAccountDescriptionUpdater {
 
     @isTest
     static void testUpdateNonexistentAccount() {
-        Id bogusId = Id.valueOf('001000000000000AAD');
+        // use a valid Id that doesn't exist by creating then deleting a record
+        Account exp = [SELECT Id FROM Account LIMIT 1];
+        delete exp;
+        Id bogusId = exp.Id;
 
         Test.startTest();
         try {
             AccountDescriptionUpdater.updateAccountDescription(bogusId, 'irrelevant');
             System.assert(false, 'Expected exception due to missing Account');
-        } catch (Exception e) {
+        } catch (QueryException e) {
             System.assert(e.getMessage().contains('List has no rows'), 'Unexpected error: ' + e.getMessage());
         }
         Test.stopTest();

@@ -1,0 +1,87 @@
+name: Salesforce CI/CD (Delta)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'force-app/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY}}
+      SF_USERNAME: ${{ secrets.SDEPLOYMENT_USER_NAME }}
+      SF_INSTANCE_URL: ${{ secrets.INSTANCE_URL}}
+      SF_JWT_KEY_B64: ${{ secrets.SJWT_SERVER_KEY }}
+      MIN_COVERAGE: 85
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install sfdx-git-delta (npx will use this if not installed)
+        run: npm install -g sfdx-git-delta || true
+
+      - name: Setup Salesforce CLI
+        uses: salesforce/setup-sfdx@v2
+        with:
+          version: latest
+
+      - name: Create JWT key file
+        run: |
+          echo "$SF_JWT_KEY_B64" | base64 --decode > jwt.key
+
+      - name: Authenticate to org (JWT)
+        id: auth
+        run: |
+          sf auth jwt grant --client-id "$SF_CLIENT_ID" --jwt-key-file jwt.key --username "$SF_USERNAME" --instance-url "$SF_INSTANCE_URL"
+
+      - name: Generate delta package
+        run: |
+          chmod +x scripts/deploy/generate_delta.sh
+          scripts/deploy/generate_delta.sh
+
+      - name: Backup changed components
+        run: |
+          chmod +x scripts/deploy/backup_changed.sh
+          scripts/deploy/backup_changed.sh
+
+      - name: Prepare destructive changes
+        run: |
+          chmod +x scripts/deploy/prepare_destructive.sh
+          scripts/deploy/prepare_destructive.sh
+
+      - name: Filter profiles to changed perms
+        run: |
+          chmod +x scripts/deploy/filter_profiles.sh
+          scripts/deploy/filter_profiles.sh
+
+      - name: Validate deployment (checkOnly)
+        id: validate
+        run: |
+          chmod +x scripts/deploy/validate_quickdeploy.sh
+          scripts/deploy/validate_quickdeploy.sh --checkonly
+
+      - name: Run tests if Apex changed
+        if: env.APEX_CHANGED == 'true'
+        run: |
+          chmod +x scripts/deploy/run_tests.sh
+          scripts/deploy/run_tests.sh
+
+      - name: Quick deploy validated package
+        if: steps.validate.outputs.request_id != ''
+        run: |
+          chmod +x scripts/deploy/validate_quickdeploy.sh
+          scripts/deploy/validate_quickdeploy.sh --quickdeploy ${{ steps.validate.outputs.request_id }}
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-backup-${{ github.sha }}
+          path: backup/
