@@ -38,6 +38,8 @@ jobs:
 
       - name: Authenticate to Salesforce (JWT)
         run: |
+          mkdir -p assets
+          echo "${{ secrets.JWT_SERVER_KEY }}" > assets/server.key
           sf org login jwt \
             --client-id ${{ secrets.CONSUMER_KEY }} \
             --jwt-key-file assets/server.key \

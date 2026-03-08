@@ -4,7 +4,7 @@
     <fullName>Active3__c</fullName>
     <label>Active3</label>
 
-    <!-- Documentation for admins and users -->
+    <!-- Documentation for admins and users1 -->
     <description>Indicates the custom active status (v3). Examples: ACTIVE, INACTIVE, PENDING.</description>
     <inlineHelpText>Provide the current status label. Max 14 characters.</inlineHelpText>
 
