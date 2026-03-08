@@ -36,6 +36,9 @@ jobs:
       - name: Install sfdx-git-delta
         run: npm install -g sfdx-git-delta
 
+      - name: Ensure scripts are executable
+        run: chmod +x scripts/deploy/*.sh scripts/apex/*.sh scripts/utils/*.sh
+
       - name: Authenticate to Salesforce (JWT)
         run: |
           mkdir -p assets
