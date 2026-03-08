@@ -6,12 +6,17 @@ ensure_dirs
 
 log "Generating delta package using sfdx-git-delta (sgd)..."
 
-# Use npx sfdx-git-delta to create a metadata package in tmp_delta
-# Falls back to globally installed 'sfdx-git-delta' if available
+
+# Use GITHUB_BASE_REF and GITHUB_SHA if set, otherwise default to HEAD~1..HEAD
+BASE_REF="${GITHUB_BASE_REF:-HEAD~1}"
+TO_REF="${GITHUB_SHA:-HEAD}"
+
+log "Delta base: $BASE_REF, to: $TO_REF"
+
 if command -v npx >/dev/null 2>&1; then
-  npx sfdx-git-delta --to HEAD --output "$TMP_DIR" || true
+  npx sfdx-git-delta --to "$TO_REF" --from "$BASE_REF" --output "$TMP_DIR" || true
 else
-  sfdx-git-delta --to HEAD --output "$TMP_DIR" || true
+  sfdx-git-delta --to "$TO_REF" --from "$BASE_REF" --output "$TMP_DIR" || true
 fi
 
 # Remove managed package components from package.xml (entries with a namespace or colon)

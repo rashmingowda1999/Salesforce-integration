@@ -58,6 +58,9 @@ jobs:
 
       - name: Generate Delta Package
         run: scripts/deploy/generate_delta.sh
+        env:
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
 
       - name: Display Components to be Deployed
         run: |
