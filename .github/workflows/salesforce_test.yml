@@ -5,7 +5,7 @@ description: >
 
 on:
   push:
-    branches: [Github_copilot_branch]
+    branches: [main]
     paths:
       - 'force-app/**'
   workflow_dispatch:
