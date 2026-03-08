@@ -53,6 +53,11 @@ jobs:
       - name: Generate Delta Package
         run: scripts/deploy/generate_delta.sh
 
+      - name: Display Components to be Deployed
+        run: |
+          echo "Components to be deployed:"
+          cat tmp_delta/package.xml || echo "No package.xml found (no components detected)"
+
       - name: Backup Changed Metadata
         run: scripts/deploy/backup.sh
 
@@ -61,6 +66,14 @@ jobs:
 
       - name: Deploy Delta Package (Validation)
         run: scripts/deploy/deploy_delta.sh validate
+
+      - name: Display Deployment ID
+        run: |
+          if [ -f tmp_delta/deployment_id.txt ]; then
+            echo "Deployment ID: $(cat tmp_delta/deployment_id.txt)"
+          else
+            echo "Deployment ID not found."
+          fi
 
       - name: Deploy Permission Sets
         run: scripts/deploy/deploy_permission_sets.sh
