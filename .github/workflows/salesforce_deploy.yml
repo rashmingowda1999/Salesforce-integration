@@ -2,9 +2,6 @@ name: Salesforce CI/CD (Delta)
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'force-app/**'
   workflow_dispatch:
 
 jobs:

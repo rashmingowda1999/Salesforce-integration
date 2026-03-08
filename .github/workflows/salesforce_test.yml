@@ -1,0 +1,88 @@
+name: Salesforce CI/CD Pipeline
+
+description: >
+  Modular pipeline for Salesforce deployments using delta packages, destructive changes, permission sets, delta profiles, managed packages, Apex test enforcement, backup, and quick deploy.
+
+on:
+  push:
+    branches: [Github_copilot_branch]
+    paths:
+      - 'force-app/**'
+  workflow_dispatch:
+
+env:
+  SFDX_DISABLE_TELEMETRY: 1
+  SFDX_USE_GENERIC_UNIX_KEYCHAIN: true
+  BACKUP_DIR: Backup/backupChanges
+
+jobs:
+  salesforce-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Install sfdx-git-delta
+        run: npm install -g sfdx-git-delta
+
+      - name: Authenticate to Salesforce (JWT)
+        run: |
+          sf org login jwt \
+            --client-id ${{ secrets.CONSUMER_KEY }} \
+            --jwt-key-file assets/server.key \
+            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --instance-url ${{ vars.INSTANCE_URL }} \
+            --alias ci-org --set-default
+        env:
+          SF_CLIENT_ID: ${{ secrets.CONSUMER_KEY }}
+          SF_JWT_KEY: ${{ secrets.JWT_SERVER_KEY }}
+          SF_USERNAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
+          SF_INSTANCE_URL: ${{ vars.INSTANCE_URL }}
+
+      - name: Generate Delta Package
+        run: scripts/deploy/generate_delta.sh
+
+      - name: Backup Changed Metadata
+        run: scripts/deploy/backup.sh
+
+      - name: Deploy Pre-Destructive Changes
+        run: scripts/deploy/handle_destructive.sh pre
+
+      - name: Deploy Delta Package (Validation)
+        run: scripts/deploy/deploy_delta.sh validate
+
+      - name: Deploy Permission Sets
+        run: scripts/deploy/deploy_permission_sets.sh
+
+      - name: Deploy Delta Profiles
+        run: scripts/deploy/filter_profiles.sh
+
+      - name: Run Impacted Apex Tests
+        run: scripts/apex/run_impacted_tests.sh
+
+      - name: Check Code Coverage
+        run: scripts/apex/check_coverage.sh
+
+      - name: Quick Deploy
+        run: scripts/deploy/validate_quickdeploy.sh
+
+      - name: Deploy Post-Destructive Changes
+        run: scripts/deploy/handle_destructive.sh post
+
+      - name: Logging
+        run: scripts/utils/logging.sh
+
+      - name: Error Handling
+        if: failure()
+        run: scripts/utils/error_handler.sh
