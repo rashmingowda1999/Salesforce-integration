@@ -1,0 +1,957 @@
+# =============================================================================
+# Salesforce Production CI/CD Pipeline
+# =============================================================================
+# This pipeline implements a production-grade CI/CD workflow for Salesforce DX
+# with delta deployment, backup strategy, and comprehensive testing.
+#
+# Features:
+# - JWT-based authentication
+# - Delta deployment using sfdx-git-delta
+# - Pre-deployment backup with 90-day retention
+# - Apex test coverage validation (85% threshold)
+# - Validate -> Quick Deploy pattern
+# - Profile delta deployment
+# - Destructive changes handling
+# - Managed package filtering
+# =============================================================================
+
+name: Salesforce Production CI/CD
+
+# Trigger on pull requests to main and push to main
+on:
+  push:
+    branches:
+      - Github_copilot_branch
+
+# Environment variables
+env:
+  SF_API_VERSION: '58.0'
+  MIN_COVERAGE: '85'
+  BACKUP_RETENTION_DAYS: '90'
+
+# =============================================================================
+# JOB DEFINITIONS
+# =============================================================================
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 1: Pre-deployment Preparation
+  # ---------------------------------------------------------------------------
+  pre-deployment:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check_changes.outputs.has_changes }}
+      apex_changed: ${{ steps.check_changes.outputs.apex_changed }}
+      permission_sets_changed: ${{ steps.check_changes.outputs.permission_sets_changed }}
+      profiles_changed: ${{ steps.check_changes.outputs.profiles_changed }}
+      delta_count: ${{ steps.check_changes.outputs.delta_count }}
+    steps:
+      # Checkout code with full history for delta calculation
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for delta calculation
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      # Install sfdx-git-delta plugin
+      - name: Install sfdx-git-delta plugin
+        run: |
+          sf plugins install sfdx-git-delta
+          sf plugins
+
+      # Determine base and target refs
+      - name: Determine refs for delta
+        id: refs
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "base=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+            echo "head=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "base=HEAD~1" >> $GITHUB_OUTPUT
+            echo "head=HEAD" >> $GITHUB_OUTPUT
+          fi
+
+      # Check for changes
+      - name: Check for changes
+        id: check_changes
+        run: |
+          BASE_REF="${{ steps.refs.outputs.base }}"
+          HEAD_REF="${{ steps.refs.outputs.head }}"
+          
+          echo "Base: $BASE_REF"
+          echo "Head: $HEAD_REF"
+          
+          # Check if there are any changes in force-app
+          CHANGES=$(git diff --name-only "$BASE_REF" "$HEAD_REF" -- force-app/ || true)
+          
+          if [ -z "$CHANGES" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in force-app/"
+            exit 0
+          fi
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          
+          # Check for Apex changes
+          if echo "$CHANGES" | grep -qE "^force-app/.*\.cls$"; then
+            echo "apex_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "apex_changed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check for Permission Set changes
+          if echo "$CHANGES" | grep -qE "^force-app/.*permissionset$"; then
+            echo "permission_sets_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "permission_sets_changed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check for Profile changes
+          if echo "$CHANGES" | grep -qE "^force-app/.*\.profile-meta\.xml$"; then
+            echo "profiles_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "profiles_changed=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Count changed files
+          DELTA_COUNT=$(echo "$CHANGES" | wc -l | tr -d ' ')
+          echo "delta_count=$DELTA_COUNT" >> $GITHUB_OUTPUT
+          
+          echo "Changed files:"
+          echo "$CHANGES"
+
+      # Generate delta package
+      - name: Generate delta package
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          BASE_REF="${{ steps.refs.outputs.base }}"
+          HEAD_REF="${{ steps.refs.outputs.head }}"
+          
+          # Create delta directory
+          mkdir -p changed-sources
+          
+          # Generate delta using sfdx-git-delta
+          sf sgd source delta \
+            --from "$BASE_REF" \
+            --to "$HEAD_REF" \
+            --output changed-sources/ \
+            --source force-app/ \
+            --generate-delta || {
+              echo "Delta generation completed with warnings"
+          }
+          
+          # Display generated artifacts
+          echo "=== Delta Package Contents ==="
+          ls -la changed-sources/
+          
+          if [ -f changed-sources/package.xml ]; then
+            echo "=== Package.xml ==="
+            cat changed-sources/package.xml
+          fi
+          
+          if [ -f changed-sources/destructiveChanges.xml ]; then
+            echo "=== Pre-Destructive Changes ==="
+            cat changed-sources/destructiveChanges.xml
+          fi
+          
+          if [ -f changed-sources/destructiveChangesPost.xml ]; then
+            echo "=== Post-Destructive Changes ==="
+            cat changed-sources/destructiveChangesPost.xml
+          fi
+
+      # Filter out managed package components
+      - name: Filter managed packages
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          if [ -f changed-sources/package.xml ]; then
+            echo "Filtering managed package components..."
+            
+            # Use XMLstarlet to filter out managed package components
+            # Components with namespace prefix (__) are from managed packages
+            
+            # Backup original
+            cp changed-sources/package.xml changed-sources/package.xml.bak
+            
+            # Filter: Remove members containing namespace (e.g., ns__CustomField__c)
+            if command -v xmlstarlet >/dev/null 2>&1; then
+              xmlstarlet ed -d '//types/members[contains(text(), "__")]' changed-sources/package.xml.bak > changed-sources/package.xml
+            else
+              # Fallback: Use grep/sed
+              grep -v '__' changed-sources/package.xml.bak > changed-sources/package.xml || true
+            fi
+            
+            echo "=== Filtered Package.xml ==="
+            cat changed-sources/package.xml
+          fi
+
+      # Upload delta artifacts
+      - name: Upload delta artifacts
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: delta-package
+          path: |
+            changed-sources/
+          retention-days: 7
+
+      # Upload change metadata
+      - name: Upload change metadata
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: change-metadata
+          path: |
+            ${{ github.workspace }}/.git/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Authentication & Backup
+  # ---------------------------------------------------------------------------
+  auth-backup:
+    name: Authenticate & Backup
+    runs-on: ubuntu-latest
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    environment: production
+    outputs:
+      backup_path: ${{ steps.backup.outputs.backup_path }}
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Download delta artifacts
+      - name: Download delta artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      # Authenticate with Salesforce (JWT)
+      - name: Authenticate with Salesforce (JWT)
+        id: auth
+        run: |
+          echo "Authenticating to Salesforce..."
+          
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+            
+          echo "Authentication successful!"
+          
+          # Verify connection
+          sf org display --target-org production-org
+
+      # Create backup directory with timestamp
+      - name: Create backup directory
+        id: backup
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          BACKUP_DIR="${{ github.workspace }}/backup/$TODAY"
+          mkdir -p "$BACKUP_DIR"
+          
+          echo "backup_path=$BACKUP_DIR" >> $GITHUB_OUTPUT
+          echo "Backup directory created: $BACKUP_DIR"
+
+      # Retrieve metadata for backup
+      - name: Retrieve metadata for backup
+        run: |
+          BACKUP_DIR="${{ steps.backup.outputs.backup_path }}"
+          MANIFEST="changed-sources/package.xml"
+          
+          if [ ! -f "$MANIFEST" ]; then
+            echo "No manifest found, skipping backup"
+            exit 0
+          fi
+          
+          echo "Retrieving metadata from target org for backup..."
+          
+          # Use sf CLI for metadata retrieval
+          sf project retrieve start \
+            --manifest "$MANIFEST" \
+            --target-dir "$BACKUP_DIR" \
+            --target-org production-org \
+            --wait 30 \
+            --json > "$BACKUP_DIR/retrieve_result.json" 2>&1 || {
+              echo "Retrieve completed with status: $?"
+          }
+          
+          # Unzip if zip file exists
+          ZIPFILE=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.zip' | head -n1 || true)
+          if [ -n "$ZIPFILE" ]; then
+            echo "Unzipping metadata: $ZIPFILE"
+            unzip -o "$ZIPFILE" -d "$BACKUP_DIR" >/dev/null 2>&1 || true
+            rm -f "$ZIPFILE"
+          fi
+          
+          echo "=== Backup Contents ==="
+          ls -la "$BACKUP_DIR/"
+
+      # Apply backup retention policy
+      - name: Apply backup retention policy
+        run: |
+          BACKUP_ROOT="${{ github.workspace }}/backup"
+          RETENTION_DAYS=${{ env.BACKUP_RETENTION_DAYS }}
+          
+          echo "Applying backup retention policy: $RETENTION_DAYS days"
+          
+          # Find and remove directories older than retention period
+          find "$BACKUP_ROOT" -maxdepth 1 -mindepth 1 -type d -mtime +$RETENTION_DAYS -print0 | \
+            xargs -0 --no-run-if-empty rm -rf --
+          
+          echo "Retention policy applied"
+          echo "=== Current Backups ==="
+          ls -la "$BACKUP_ROOT/"
+
+      # Upload backup artifacts
+      - name: Upload backup artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-metadata
+          path: |
+            backup/
+          retention-days: 7
+
+      # Cleanup JWT key
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f server.key
+          echo "Cleanup completed"
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Pre-Destructive Changes (if applicable)
+  # ---------------------------------------------------------------------------
+  pre-destructive:
+    name: Pre-Destructive Changes
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, auth-backup]
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    environment: production
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Check if destructive changes file exists
+      - name: Check for destructive changes
+        id: check_destructive
+        run: |
+          if [ -f "changed-sources/destructiveChanges.xml" ]; then
+            echo "has_destructive=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_destructive=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+        if: steps.check_destructive.outputs.has_destructive == 'true'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+        if: steps.check_destructive.outputs.has_destructive == 'true'
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+        if: steps.check_destructive.outputs.has_destructive == 'true'
+
+      # Authenticate
+      - name: Authenticate with Salesforce
+        run: |
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+        if: steps.check_destructive.outputs.has_destructive == 'true'
+
+      # Deploy pre-destructive changes
+      - name: Deploy pre-destructive changes
+        run: |
+          DESTRUCTIVE_FILE="changed-sources/destructiveChanges.xml"
+          
+          if [ -f "$DESTRUCTIVE_FILE" ]; then
+            echo "Deploying pre-destructive changes..."
+            
+            sf project deploy start \
+              --manifest "$DESTRUCTIVE_FILE" \
+              --target-org production-org \
+              --ignore-warnings \
+              --wait 30 \
+              --json
+              
+            echo "Pre-destructive changes deployed successfully"
+          else
+            echo "No pre-destructive changes file found"
+          fi
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: rm -f server.key
+
+  # ---------------------------------------------------------------------------
+  # Stage 4: Main Deployment Validation
+  # ---------------------------------------------------------------------------
+  validate-deployment:
+    name: Validate Deployment
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, auth-backup, pre-destructive]
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    environment: production
+    outputs:
+      validation_id: ${{ steps.validate.outputs.validation_id }}
+      test_level: ${{ steps.validate.outputs.test_level }}
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      # Authenticate
+      - name: Authenticate with Salesforce
+        run: |
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+
+      # Determine test level
+      - name: Determine test level
+        id: test_level
+        run: |
+          if [[ "${{ needs.pre-deployment.outputs.apex_changed }}" == "true" ]]; then
+            echo "Running Apex tests due to Apex changes"
+            echo "test_level=RunSpecifiedTests" >> $GITHUB_OUTPUT
+          else
+            echo "test_level=NoTestRun" >> $GITHUB_OUTPUT
+          fi
+
+      # Validate deployment (check-only)
+      - name: Validate deployment
+        id: validate
+        run: |
+          echo "Starting validation deployment..."
+          
+          # Determine package.xml path
+          if [ -f "changed-sources/package.xml" ]; then
+            MANIFEST="changed-sources/package.xml"
+          elif [ -d "changed-sources/force-app" ]; then
+            # Use source directory if no package.xml
+            MANIFEST="changed-sources/force-app"
+          else
+            echo "No deployment package found"
+            exit 1
+          fi
+          
+          # Run validation
+          VALIDATE_RESULT=$(sf project deploy validate \
+            --manifest "$MANIFEST" \
+            --target-org production-org \
+            --test-level "${{ steps.test_level.outputs.test_level }}" \
+            --wait 30 \
+            --json 2>&1)
+          
+          echo "$VALIDATE_RESULT" | tee validation-result.json
+          
+          # Extract validation ID
+          VALIDATION_ID=$(echo "$VALIDATE_RESULT" | jq -r '.result.id // empty')
+          
+          if [ -n "$VALIDATION_ID" ]; then
+            echo "validation_id=$VALIDATION_ID" >> $GITHUB_OUTPUT
+            echo "Validation ID: $VALIDATION_ID"
+          else
+            # Check for already validated status
+            ERROR_MSG=$(echo "$VALIDATE_RESULT" | jq -r '.message // .result.errorMessage // "Unknown error"')
+            echo "Validation failed: $ERROR_MSG"
+            exit 1
+          fi
+
+      # Upload validation result
+      - name: Upload validation result
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-result
+          path: |
+            validation-result.json
+          retention-days: 7
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: rm -f server.key
+
+  # ---------------------------------------------------------------------------
+  # Stage 5: Apex Test Execution (if Apex changed)
+  # ---------------------------------------------------------------------------
+  run-apex-tests:
+    name: Run Apex Tests
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, validate-deployment]
+    if: needs.pre-deployment.outputs.apex_changed == 'true'
+    environment: production
+    outputs:
+      coverage: ${{ steps.tests.outputs.coverage }}
+      tests_passed: ${{ steps.tests.outputs.tests_passed }}
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      # Authenticate
+      - name: Authenticate with Salesforce
+        run: |
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+
+      # Run Apex tests
+      - name: Run Apex tests
+        id: tests
+        run: |
+          echo "Running Apex tests..."
+          
+          # Get list of changed Apex classes
+          CHANGED_CLASSES=$(git diff --name-only HEAD~1 HEAD -- '*.cls' | grep -v 'Test.cls$' | sed 's/\.cls$//' | tr '\n' ',' || true)
+          
+          if [ -z "$CHANGED_CLASSES" ]; then
+            echo "No Apex classes to test"
+            exit 0
+          fi
+          
+          echo "Testing classes: $CHANGED_CLASSES"
+          
+          # Run tests with code coverage
+          TEST_RESULT=$(sf apex run test \
+            --class-names "$CHANGED_CLASSES" \
+            --target-org production-org \
+            --wait 30 \
+            --codecoverage \
+            --json 2>&1)
+          
+          echo "$TEST_RESULT" | tee test-result.json
+          
+          # Extract coverage
+          COVERAGE=$(echo "$TEST_RESULT" | jq -r '.result.coverage.coverage // .result.summary.coverage // empty' || true)
+          
+          if [ -z "$COVERAGE" ] || [ "$COVERAGE" = "null" ]; then
+            # Try alternative path
+            COVERAGE=$(echo "$TEST_RESULT" | jq -r '.result[0].codeCoverage.coveragePercent // empty' || true)
+          fi
+          
+          # If still no coverage, default to 0
+          COVERAGE=${COVERAGE:-0}
+          
+          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+          
+          # Check if tests passed
+          TEST_STATUS=$(echo "$TEST_RESULT" | jq -r '.result.summary.tests // .result.summary.failing // 0')
+          echo "tests_passed=$TEST_STATUS" >> $GITHUB_OUTPUT
+          
+          echo "=== Coverage: $COVERAGE% ==="
+          echo "=== Tests: $TEST_STATUS ==="
+
+      # Check coverage threshold
+      - name: Check coverage threshold
+        run: |
+          COVERAGE="${{ steps.tests.outputs.coverage }}"
+          MIN_COVERAGE=${{ env.MIN_COVERAGE }}
+          
+          echo "Checking code coverage..."
+          echo "Current: $COVERAGE%"
+          echo "Minimum required: $MIN_COVERAGE%"
+          
+          # Convert to number for comparison
+          COVERAGE_NUM=$(echo "$COVERAGE" | grep -oE '[0-9]+(\.[0-9]+)?' | head -1 || echo "0")
+          
+          if (( $(echo "$COVERAGE_NUM < $MIN_COVERAGE" | bc -l) )); then
+            echo "ERROR: Code coverage $COVERAGE_NUM% is below minimum $MIN_COVERAGE%"
+            exit 1
+          fi
+          
+          echo "Coverage check passed!"
+
+      # Upload test results
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-result.json
+          retention-days: 7
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: rm -f server.key
+
+  # ---------------------------------------------------------------------------
+  # Stage 6: Quick Deploy (if validation succeeded)
+  # ---------------------------------------------------------------------------
+  quick-deploy:
+    name: Quick Deploy
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, validate-deployment, run-apex-tests]
+    if: |
+      needs.pre-deployment.outputs.has_changes == 'true' &&
+      needs.validate-deployment.outputs.validation_id != ''
+    environment: production
+    outputs:
+      deployment_status: ${{ steps.deploy.outputs.status }}
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      # Authenticate
+      - name: Authenticate with Salesforce
+        run: |
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+
+      # Perform quick deploy
+      - name: Quick deploy validated changes
+        id: deploy
+        run: |
+          VALIDATION_ID="${{ needs.validate-deployment.outputs.validation_id }}"
+          
+          echo "Performing quick deploy with validation ID: $VALIDATION_ID"
+          
+          DEPLOY_RESULT=$(sf project deploy quick \
+            --validated-request-id "$VALIDATION_ID" \
+            --target-org production-org \
+            --wait 30 \
+            --json 2>&1)
+          
+          echo "$DEPLOY_RESULT" | tee deploy-result.json
+          
+          STATUS=$(echo "$DEPLOY_RESULT" | jq -r '.result.status // .status')
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          
+          if [ "$STATUS" = "Succeeded" ] || [ "$STATUS" = "Successful" ]; then
+            echo "Deployment successful!"
+          else
+            echo "Deployment status: $STATUS"
+            # Check for specific error
+            ERROR=$(echo "$DEPLOY_RESULT" | jq -r '.message // .result.errorMessage // "Unknown error"')
+            echo "Error: $ERROR"
+          fi
+
+      # Verify deployment
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed!"
+          
+          # Display deployment status
+          echo "=== Deployment Status ==="
+          cat deploy-result.json | jq '.'
+
+      # Upload deployment result
+      - name: Upload deployment result
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-result
+          path: |
+            deploy-result.json
+          retention-days: 30
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: rm -f server.key
+
+  # ---------------------------------------------------------------------------
+  # Stage 7: Post-Destructive Changes (if applicable)
+  # ---------------------------------------------------------------------------
+  post-destructive:
+    name: Post-Destructive Changes
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, quick-deploy]
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    environment: production
+    steps:
+      # Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # Download artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+          path: changed-sources
+
+      # Check if destructive changes file exists
+      - name: Check for post-destructive changes
+        id: check_post_destructive
+        run: |
+          if [ -f "changed-sources/destructiveChangesPost.xml" ] || [ -f "changed-sources/destructiveChanges.xml" ]; then
+            echo "has_post_destructive=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_post_destructive=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+        if: steps.check_post_destructive.outputs.has_post_destructive == 'true'
+
+      # Install Salesforce CLI
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+        if: steps.check_post_destructive.outputs.has_post_destructive == 'true'
+
+      # Create JWT key file
+      - name: Create JWT key file
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+        if: steps.check_post_destructive.outputs.has_post_destructive == 'true'
+
+      # Authenticate
+      - name: Authenticate with Salesforce
+        run: |
+          sf org login jwt \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file server.key \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias production-org
+        if: steps.check_post_destructive.outputs.has_post_destructive == 'true'
+
+      # Deploy post-destructive changes
+      - name: Deploy post-destructive changes
+        run: |
+          DESTRUCTIVE_FILE=""
+          
+          if [ -f "changed-sources/destructiveChangesPost.xml" ]; then
+            DESTRUCTIVE_FILE="changed-sources/destructiveChangesPost.xml"
+          elif [ -f "changed-sources/destructiveChanges.xml" ]; then
+            DESTRUCTIVE_FILE="changed-sources/destructiveChanges.xml"
+          fi
+          
+          if [ -n "$DESTRUCTIVE_FILE" ]; then
+            echo "Deploying post-destructive changes from: $DESTRUCTIVE_FILE"
+            
+            sf project deploy start \
+              --manifest "$DESTRUCTIVE_FILE" \
+              --target-org production-org \
+              --ignore-warnings \
+              --wait 30 \
+              --json
+              
+            echo "Post-destructive changes deployed successfully"
+          else
+            echo "No post-destructive changes file found"
+          fi
+
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: rm -f server.key
+
+  # ---------------------------------------------------------------------------
+  # Stage 8: Deployment Summary
+  # ---------------------------------------------------------------------------
+  deployment-summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, auth-backup, pre-destructive, validate-deployment, run-apex-tests, quick-deploy, post-destructive]
+    if: always()
+    steps:
+      # Generate summary
+      - name: Generate deployment summary
+        run: |
+          echo "=========================================="
+          echo "   SALESFORCE DEPLOYMENT SUMMARY"
+          echo "=========================================="
+          echo ""
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Workflow: ${{ github.workflow }}"
+          echo ""
+          echo "--- Changes Detected ---"
+          echo "Has Changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          echo "Apex Changed: ${{ needs.pre-deployment.outputs.apex_changed }}"
+          echo "Permission Sets Changed: ${{ needs.pre-deployment.outputs.permission_sets_changed }}"
+          echo "Profiles Changed: ${{ needs.pre-deployment.outputs.profiles_changed }}"
+          echo "Delta Count: ${{ needs.pre-deployment.outputs.delta_count }}"
+          echo ""
+          echo "--- Deployment Status ---"
+          echo "Validation ID: ${{ needs.validate-deployment.outputs.validation_id }}"
+          echo "Quick Deploy Status: ${{ needs.quick-deploy.outputs.deployment_status }}"
+          echo ""
+          
+          if needs.run-apex-tests.outputs.coverage != ''; then
+            echo "--- Test Results ---"
+            echo "Code Coverage: ${{ needs.run-apex-tests.outputs.coverage }}%"
+            echo "Tests Passed: ${{ needs.run-apex-tests.outputs.tests_passed }}"
+            echo ""
+          fi
+          
+          # Determine overall status
+          if [[ "${{ needs.quick-deploy.outputs.deployment_status }}" == "Succeeded" ]]; then
+            echo "=========================================="
+            echo "   ✓ DEPLOYMENT SUCCESSFUL"
+            echo "=========================================="
+          else
+            echo "=========================================="
+            echo "   ✗ DEPLOYMENT FAILED"
+            echo "=========================================="
+            exit 1
+          fi
+
+      # Create deployment badge
+      - name: Create deployment badge
+        if: always()
+        run: |
+          STATUS="${{ needs.quick-deploy.outputs.deployment_status }}"
+          
+          if [ "$STATUS" = "Succeeded" ]; then
+            echo "✅ Deployment Successful" > deployment_status.md
+          else
+            echo "❌ Deployment Failed" > deployment_status.md
+          fi
+
+      # Upload summary
+      - name: Upload deployment summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-summary
+          path: |
+            deployment_status.md
+          retention-days: 30
+

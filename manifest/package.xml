@@ -5,7 +5,9 @@
         <name>FlexiPage</name>
     </types>
     <types>
-        <members>Account.Active__c</members>
+        <members>Account.Active3__c</members>
+        <members>Account.Active4__c</members>
+        <members>Account.BlackBoxTest__c</members>
         <name>CustomField</name>
     </types>
    <types>
