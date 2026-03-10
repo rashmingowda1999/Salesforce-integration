@@ -33,7 +33,7 @@ on:
           - 'false'
 
 env:
-  SFDX_DISABLE_TELEMETRY: 1
+  SF_DISABLE_TELEMETRY: 1
   SF_API_VERSION: "65.0"
   MIN_COVERAGE: 85
   BACKUP_DIR: Backup/backupChanges
@@ -160,7 +160,7 @@ jobs:
 
       - name: Verify Authentication
         run: |
-          sf org display deployment-org --verbose
+          sf org display --target-org deployment-org
 
       - name: Cache Salesforce CLI
         uses: actions/cache@v4
