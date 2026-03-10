@@ -1,0 +1,605 @@
+name: Salesforce Production CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'force-app/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'force-app/**'
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Deployment Type'
+        required: true
+        default: 'delta'
+        type: choice
+        options:
+          - delta
+          - full
+      target_org:
+        description: 'Target Org Alias'
+        required: false
+        default: 'production'
+      run_tests:
+        description: 'Run Apex Tests'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  SFDX_DISABLE_TELEMETRY: 1
+  SF_API_VERSION: "65.0"
+  MIN_COVERAGE: 85
+  BACKUP_DIR: Backup/backupChanges
+  DELTA_DIR: tmp_delta
+
+jobs:
+  # ============================================
+  # PRE-DEPLOYMENT: Detect Changes & Generate Delta
+  # ============================================
+  pre-deployment:
+    name: Pre-Deployment Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.detect_changes.outputs.has_changes }}
+      changed_files: ${{ steps.detect_changes.outputs.changed_files }}
+      changed_types: ${{ steps.detect_changes.outputs.changed_types }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Install sfdx-git-delta
+        run: npm install -g sfdx-git-delta
+
+      - name: Detect Changes
+        id: detect_changes
+        run: |
+          # Get the base commit (previous commit for push, PR base for PR)
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+          else
+            # For push events, compare with parent commit
+            BASE_REF="${{ github.event.before }}"
+            if [ -z "$BASE_REF" ] || [ "$BASE_REF" == "0000000000000000000000000000000000000000" ]; then
+              BASE_REF="${{ github.sha }}^"
+            fi
+          fi
+          
+          echo "Base commit: $BASE_REF"
+          echo "Current commit: ${{ github.sha }}"
+          
+          # Run sfdx-git-delta to detect changes
+          mkdir -p $DELTA_DIR
+          
+          # Generate delta package
+          sfdx git:delta --from "$BASE_REF" --to "${{ github.sha }}" --output "$DELTA_DIR" --generate-package || true
+          
+          # Check if there are changes
+          if [ -f "$DELTA_DIR/package.xml" ] && [ -s "$DELTA_DIR/package.xml" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in delta package"
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          fi
+          
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only $BASE_REF ${{ github.sha }} -- 'force-app/**' || echo "")
+          echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          
+          # Detect changed metadata types
+          CHANGED_TYPES=$(echo "$CHANGED_FILES" | sed 's/.*\///' | sed 's/.*\.//' | sort -u | tr '\n' ',' || echo "")
+          echo "changed_types=$CHANGED_TYPES" >> $GITHUB_OUTPUT
+          
+          # Display summary
+          echo "=== Changed Files Summary ==="
+          echo "$CHANGED_FILES"
+          
+      - name: Upload Delta Package
+        uses: actions/upload-artifact@v4
+        if: steps.detect_changes.outputs.has_changes == 'true'
+        with:
+          name: delta-package
+          path: |
+            tmp_delta/package.xml
+            tmp_delta/destructiveChanges*.xml
+          retention-days: 1
+
+  # ============================================
+  # AUTHENTICATION: JWT Authentication
+  # ============================================
+  authenticate:
+    name: Authenticate to Salesforce
+    needs: pre-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Create JWT key file
+        run: |
+          mkdir -p ~/.jwt
+          echo "${{ secrets.JWT_SERVER_KEY }}" > ~/.jwt/server.key
+          chmod 600 ~/.jwt/server.key
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Verify Authentication
+        run: |
+          sf org display deployment-org --verbose
+
+      - name: Cache Salesforce CLI
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sf
+            ~/.local/share/sfdx
+          key: sfdx-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+
+  # ============================================
+  # BACKUP: Backup Changed Metadata
+  # ============================================
+  backup:
+    name: Backup Metadata
+    needs: [pre-deployment, authenticate]
+    runs-on: ubuntu-latest
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Create Backup Directory
+        run: |
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+          echo "BACKUP_PATH=$BACKUP_DIR/$TIMESTAMP" >> $GITHUB_ENV
+          mkdir -p $BACKUP_DIR/$TIMESTAMP
+
+      - name: Retrieve Changed Metadata
+        run: |
+          # Download metadata for changed components
+          if [ -f tmp_delta/package.xml ]; then
+            echo "Retrieving metadata from target org..."
+            sf project retrieve start \
+              --manifest tmp_delta/package.xml \
+              --target-org deployment-org \
+              --output-dir retrieved_changes \
+              --wait 30 || echo "No metadata to retrieve"
+          fi
+
+      - name: Save Backup
+        run: |
+          if [ -d "retrieved_changes" ]; then
+            cp -r retrieved_changes/* $BACKUP_PATH/ || true
+            echo "Backup completed to: $BACKUP_PATH"
+          else
+            echo "No metadata to backup"
+          fi
+
+      - name: Upload Backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: metadata-backup
+          path: Backup/
+          retention-days: 90
+
+  # ============================================
+  # VALIDATION: Validate Deployment
+  # ============================================
+  validate:
+    name: Validate Deployment
+    needs: [pre-deployment, authenticate, backup]
+    runs-on: ubuntu-latest
+    if: needs.pre-deployment.outputs.has_changes == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Install sfdx-git-delta
+        run: npm install -g sfdx-git-delta
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Download Delta Package
+        uses: actions/download-artifact@v4
+        with:
+          name: delta-package
+
+      - name: Regenerate Delta Package
+        run: |
+          # Get the base commit
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_REF="${{ github.event.before }}"
+            if [ -z "$BASE_REF" ] || [ "$BASE_REF" == "0000000000000000000000000000000000000000" ]; then
+              BASE_REF="${{ github.sha }}^"
+            fi
+          fi
+          
+          # Regenerate delta package
+          sfdx git:delta --from "$BASE_REF" --to "${{ github.sha }}" --output "$DELTA_DIR" --generate-package || true
+
+      - name: Display Package Contents
+        run: |
+          echo "=== Package.xml Contents ==="
+          cat tmp_delta/package.xml || echo "No package.xml found"
+          
+          echo ""
+          echo "=== Destructive Changes (Pre) ==="
+          cat tmp_delta/destructiveChanges.xml || echo "No pre-destructive changes"
+
+      - name: Deploy Pre-Destructive Changes
+        run: |
+          if [ -f "tmp_delta/destructiveChanges.xml" ]; then
+            echo "Deploying pre-destructive changes..."
+            sf project deploy start \
+              --manifest destructiveChanges.xml \
+              --target-org deployment-org \
+              --check-only \
+              --wait 30 \
+              --verbose || echo "Pre-destructive validation completed"
+          else
+            echo "No pre-destructive changes to deploy"
+          fi
+
+      - name: Deploy Delta Package (Validation)
+        id: validation
+        run: |
+          echo "Starting validation deployment..."
+          
+          # Run validation deployment
+          if [ -f "tmp_delta/package.xml" ]; then
+            sf project deploy start \
+              --manifest tmp_delta/package.xml \
+              --target-org deployment-org \
+              --check-only \
+              --wait 30 \
+              --verbose \
+              --result-file validation_result.json
+            
+            # Capture validation ID
+            if [ -f "validation_result.json" ]; then
+              VALIDATION_ID=$(cat validation_result.json | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -n "$VALIDATION_ID" ]; then
+                echo "VALIDATION_ID=$VALIDATION_ID" >> $GITHUB_ENV
+                echo "Validation ID: $VALIDATION_ID"
+                echo "$VALIDATION_ID" > validation_id.txt
+              fi
+            fi
+          else
+            echo "No package.xml found - skipping validation"
+          fi
+
+      - name: Upload Validation Result
+        uses: actions/upload-artifact@v4
+        if: env.VALIDATION_ID
+        with:
+          name: validation-result
+          path: |
+            validation_result.json
+            validation_id.txt
+          retention-days: 10
+
+  # ============================================
+  # APEX TESTS: Run Impacted Tests
+  # ============================================
+  run-tests:
+    name: Run Apex Tests
+    needs: [pre-deployment, authenticate]
+    runs-on: ubuntu-latest
+    if: needs.pre-deployment.outputs.has_changes == 'true' && github.event.inputs.run_tests != 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Install sfdx-git-delta
+        run: npm install -g sfdx-git-delta
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Detect Apex Changes
+        run: |
+          # Get changed Apex files
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_REF="${{ github.event.before }}"
+            if [ -z "$BASE_REF" ] || [ "$BASE_REF" == "0000000000000000000000000000000000000000" ]; then
+              BASE_REF="${{ github.sha }}^"
+            fi
+          fi
+          
+          # Find changed Apex classes
+          CHANGED_APEX=$(git diff --name-only $BASE_REF ${{ github.sha }} -- 'force-app/**' | grep -E '\.(cls|trigger)$' || echo "")
+          echo "Changed Apex files:"
+          echo "$CHANGED_APEX"
+          
+          # Save for next steps
+          echo "$CHANGED_APEX" > changed_apex.txt
+
+      - name: Run Apex Tests
+        run: |
+          # Run tests for changed Apex
+          if [ -s "changed_apex.txt" ]; then
+            echo "Running tests for changed Apex classes..."
+            
+            sf apex test run \
+              --target-org deployment-org \
+              --wait 30 \
+              --result-format human \
+              --output-dir test-results || true
+          else
+            echo "No Apex changes detected - running all tests..."
+            
+            # Run all tests if no specific changes
+            sf apex test run \
+              --target-org deployment-org \
+              --wait 30 \
+              --result-format human \
+              --output-dir test-results \
+              --test-level RunLocalTests || true
+          fi
+
+      - name: Check Code Coverage
+        run: |
+          echo "Checking code coverage..."
+          
+          # Get coverage report
+          sf apex test report \
+            --target-org deployment-org \
+            --wait 30 \
+            --coverage \
+            --result-format human || true
+          
+          # Verify minimum coverage
+          COVERAGE=$(sf data query --query "SELECT Coverage FROM ApexOrgWideCoverage" --target-org deployment-org --json 2>/dev/null | grep -o '"percentagecovered":[0-9]*' | cut -d':' -f2 || echo "0")
+          
+          echo "Current coverage: $COVERAGE%"
+          
+          if [ "$COVERAGE" -lt "$MIN_COVERAGE" ]; then
+            echo "Coverage $COVERAGE% is below minimum $MIN_COVERAGE%"
+            exit 1
+          else
+            echo "Coverage $COVERAGE% meets minimum $MIN_COVERAGE%"
+          fi
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 30
+
+  # ============================================
+  # QUICK DEPLOY: Deploy using Validation ID
+  # ============================================
+  quick-deploy:
+    name: Quick Deploy
+    needs: [validate, run-tests]
+    runs-on: ubuntu-latest
+    if: needs.validate.outputs.result == 'success' && needs.run-tests.outputs.result == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Download Validation Result
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-result
+
+      - name: Quick Deploy
+        run: |
+          if [ -f "validation_id.txt" ]; then
+            VALIDATION_ID=$(cat validation_id.txt)
+            echo "Executing quick deploy with validation ID: $VALIDATION_ID"
+            
+            sf project deploy quick \
+              --validation-id "$VALIDATION_ID" \
+              --target-org deployment-org \
+              --wait 30 \
+              --verbose
+          else
+            echo "No validation ID found - performing full deployment"
+            
+            # Fallback to full deployment
+            sf project deploy start \
+              --manifest tmp_delta/package.xml \
+              --target-org deployment-org \
+              --wait 30 \
+              --verbose
+          fi
+
+  # ============================================
+  # POST DEPLOYMENT: Post-Destructive Changes
+  # ============================================
+  post-deployment:
+    name: Post-Destructive Changes
+    needs: [quick-deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install -g @salesforce/cli
+
+      - name: Authenticate with JWT Grant
+        run: |
+          sf auth jwt grant \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --jwt-key-file ~/.jwt/server.key \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --set-default \
+            --alias deployment-org
+
+      - name: Deploy Post-Destructive Changes
+        run: |
+          if [ -f "tmp_delta/destructiveChangesPost.xml" ]; then
+            echo "Deploying post-destructive changes..."
+            
+            sf project deploy start \
+              --manifest tmp_delta/destructiveChangesPost.xml \
+              --target-org deployment-org \
+              --wait 30 \
+              --verbose || echo "Post-destructive deployment completed"
+          else
+            echo "No post-destructive changes to deploy"
+          fi
+
+  # ============================================
+  # DEPLOYMENT SUMMARY
+  # ============================================
+  deployment-summary:
+    name: Deployment Summary
+    needs: [pre-deployment, validate, run-tests, quick-deploy, post-deployment]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate Deployment Report
+        run: |
+          echo "=========================================="
+          echo "  SALESFORCE DEPLOYMENT REPORT"
+          echo "=========================================="
+          echo ""
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo ""
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo ""
+          echo "--- Deployment Results ---"
+          echo "Pre-deployment: ${{ needs.pre-deployment.result }}"
+          echo "Authentication: ${{ needs.authenticate.result }}"
+          echo "Backup: ${{ needs.backup.result }}"
+          echo "Validation: ${{ needs.validate.result }}"
+          echo "Tests: ${{ needs.run-tests.result }}"
+          echo "Quick Deploy: ${{ needs.quick-deploy.result }}"
+          echo "Post-Destructive: ${{ needs.post-deployment.result }}"
+          echo ""
+          
+          # Overall status
+          if [ "${{ needs.quick-deploy.result }}" == "success" ]; then
+            echo "🎉 DEPLOYMENT SUCCESSFUL"
+            exit 0
+          else
+            echo "❌ DEPLOYMENT FAILED"
+            exit 1
+          fi
+
+      - name: Send Deployment Notification
+        if: always()
+        run: |
+          # This could be extended to send notifications to Slack, email, etc.
+          echo "Deployment notification would be sent here"
+

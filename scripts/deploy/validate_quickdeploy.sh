@@ -1,36 +1,86 @@
-#!/usr/bin/env bash
-set -euo pipefail
-source "$(dirname "$0")/utils.sh"
+#!/bin/bash
+# ============================================================================
+# validate_quickdeploy.sh - Quick Deploy using validation ID
+# ============================================================================
+# This script performs a quick deploy using a previously successful
+# validation, which is faster than a full deployment.
+# ============================================================================
 
-ensure_dirs
+set -e
 
-usage() { echo "Usage: $0 [--checkonly] [--quickdeploy <validatedRequestId>]"; exit 1; }
+# Configuration
+TARGET_ORG="${1:-deployment-org}"
+DELTA_DIR="${2:-tmp_delta}"
 
-if [ "$#" -eq 0 ]; then
-  usage
+echo "=============================================="
+echo "  Quick Deploy"
+echo "=============================================="
+echo "Target Org: $TARGET_ORG"
+echo "=============================================="
+
+# Check for validation ID
+VALIDATION_ID_FILE="$DELTA_DIR/deployment_id.txt"
+VALIDATION_ID=""
+
+# Try to get validation ID from various sources
+if [ -f "$VALIDATION_ID_FILE" ]; then
+    VALIDATION_ID=$(cat "$VALIDATION_ID_FILE")
+    echo "Found validation ID from file: $VALIDATION_ID"
+elif [ -n "$DEPLOYMENT_ID" ]; then
+    VALIDATION_ID="$DEPLOYMENT_ID"
+    echo "Found validation ID from environment: $VALIDATION_ID"
 fi
 
-if [ "$1" = "--checkonly" ]; then
-  log "Validating deployment (checkOnly) using MDAPI deploy"
-  if [ -d "$TMP_DIR" ]; then
-    sfdx force:mdapi:deploy -d "$TMP_DIR" --checkonly --wait 10 --json > "$TMP_DIR/deploy_validate.json" || true
-    REQ_ID=$(jq -r '.result.id // ""' "$TMP_DIR/deploy_validate.json" 2>/dev/null || echo "")
-    echo "request_id=$REQ_ID"
-    # expose as output for workflow
-    echo "::set-output name=request_id::$REQ_ID"
-  else
-    log "No tmp delta dir found for validation"
-    exit 1
-  fi
-elif [ "$1" = "--quickdeploy" ]; then
-  REQ_ID="$2"
-  if [ -z "$REQ_ID" ]; then
-    echo "No validated request id provided" >&2
-    exit 1
-  fi
-  log "Performing quick deploy using validated request id: $REQ_ID"
-  sfdx force:mdapi:deploy --validateddeployrequestid "$REQ_ID" --wait 10 --json > "$TMP_DIR/quickdeploy.json" || true
-  jq -r '.status' "$TMP_DIR/quickdeploy.json" || true
+# If no validation ID, perform full deployment
+if [ -z "$VALIDATION_ID" ]; then
+    echo ""
+    echo "⚠️  No validation ID found"
+    echo "Performing full deployment instead..."
+    
+    if [ -f "$DELTA_DIR/package.xml" ]; then
+        sf project deploy start \
+            --manifest "$DELTA_DIR/package.xml" \
+            --target-org "$TARGET_ORG" \
+            --wait 30 \
+            --verbose
+    else
+        echo "No package.xml found - nothing to deploy"
+        exit 0
+    fi
 else
-  usage
+    echo ""
+    echo "Validation ID: $VALIDATION_ID"
+    
+    # Check validation status before quick deploy
+    echo ""
+    echo "Checking validation status..."
+    
+    sf project deploy report \
+        --job-id "$VALIDATION_ID" \
+        --target-org "$TARGET_ORG" \
+        --wait 30
+    
+    # Execute quick deploy
+    echo ""
+    echo "Executing quick deploy..."
+    
+    sf project deploy quick \
+        --validation-id "$VALIDATION_ID" \
+        --target-org "$TARGET_ORG" \
+        --wait 30 \
+        --verbose
 fi
+
+DEPLOYMENT_STATUS=$?
+
+if [ $DEPLOYMENT_STATUS -eq 0 ]; then
+    echo ""
+    echo "✅ Quick Deploy completed successfully!"
+else
+    echo ""
+    echo "❌ Quick Deploy failed with status: $DEPLOYMENT_STATUS"
+    exit $DEPLOYMENT_STATUS
+fi
+
+exit 0
+
