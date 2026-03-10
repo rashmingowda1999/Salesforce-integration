@@ -177,7 +177,6 @@ jobs:
     name: Backup Metadata
     needs: [pre-deployment, authenticate]
     runs-on: ubuntu-latest
-    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -192,6 +191,8 @@ jobs:
 
       - name: Authenticate with JWT Grant
         run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > ~/.jwt/server.key
+          chmod 600 ~/.jwt/server.key
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
@@ -200,13 +201,25 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "No changes detected - skipping backup"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Backup Directory
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
           echo "BACKUP_PATH=$BACKUP_DIR/$TIMESTAMP" >> $GITHUB_ENV
           mkdir -p $BACKUP_DIR/$TIMESTAMP
 
       - name: Retrieve Changed Metadata
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           # Download metadata for changed components
           if [ -f tmp_delta/package.xml ]; then
@@ -219,6 +232,7 @@ jobs:
           fi
 
       - name: Save Backup
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           if [ -d "retrieved_changes" ]; then
             cp -r retrieved_changes/* $BACKUP_PATH/ || true
@@ -228,6 +242,7 @@ jobs:
           fi
 
       - name: Upload Backup
+        if: steps.check_changes.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: metadata-backup
@@ -241,7 +256,6 @@ jobs:
     name: Validate Deployment
     needs: [pre-deployment, authenticate, backup]
     runs-on: ubuntu-latest
-    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -355,7 +369,6 @@ jobs:
     name: Run Apex Tests
     needs: [pre-deployment, authenticate]
     runs-on: ubuntu-latest
-    if: needs.pre-deployment.outputs.has_changes == 'true' && github.event.inputs.run_tests != 'false'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -462,7 +475,6 @@ jobs:
     name: Quick Deploy
     needs: [validate, run-tests]
     runs-on: ubuntu-latest
-    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -520,7 +532,6 @@ jobs:
     name: Post-Destructive Changes
     needs: [quick-deploy]
     runs-on: ubuntu-latest
-    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
