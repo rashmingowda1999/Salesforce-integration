@@ -2,7 +2,7 @@ name: Salesforce Production CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [github_copilot_branch]
     paths:
       - 'force-app/**'
   pull_request:
