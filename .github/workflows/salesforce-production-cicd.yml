@@ -17,11 +17,22 @@
 
 name: Salesforce Production CI/CD
 
-# Trigger on pull requests to main and push to main
+# Trigger on pull requests and push to Github_copilot_branch
 on:
   push:
     branches:
       - Github_copilot_branch
+    paths:
+      - 'force-app/**'
+  pull_request:
+    branches:
+      - Github_copilot_branch
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - 'force-app/**'
 
 # Environment variables
 env:
