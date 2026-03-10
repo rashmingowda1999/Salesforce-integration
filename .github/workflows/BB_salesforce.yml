@@ -60,7 +60,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Don't use npm cache since we don't have package-lock.json
+          cache: ''
 
       - name: Install npm dependencies
         run: npm install
@@ -461,7 +462,7 @@ jobs:
     name: Quick Deploy
     needs: [validate, run-tests]
     runs-on: ubuntu-latest
-    if: needs.validate.outputs.result == 'success' && needs.run-tests.outputs.result == 'success'
+    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -486,6 +487,7 @@ jobs:
 
       - name: Download Validation Result
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: validation-result
 
@@ -518,7 +520,7 @@ jobs:
     name: Post-Destructive Changes
     needs: [quick-deploy]
     runs-on: ubuntu-latest
-    if: always()
+    if: needs.pre-deployment.outputs.has_changes == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -541,13 +543,25 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Download Delta Package
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: delta-package
+
       - name: Deploy Post-Destructive Changes
         run: |
-          if [ -f "tmp_delta/destructiveChangesPost.xml" ]; then
+          # Check if destructive changes file exists
+          if [ -f "destructiveChangesPost.xml" ] || [ -f "tmp_delta/destructiveChangesPost.xml" ]; then
             echo "Deploying post-destructive changes..."
             
+            MANIFEST_FILE="destructiveChangesPost.xml"
+            if [ -f "tmp_delta/destructiveChangesPost.xml" ]; then
+              MANIFEST_FILE="tmp_delta/destructiveChangesPost.xml"
+            fi
+            
             sf project deploy start \
-              --manifest tmp_delta/destructiveChangesPost.xml \
+              --manifest "$MANIFEST_FILE" \
               --target-org deployment-org \
               --wait 30 \
               --verbose || echo "Post-destructive deployment completed"
@@ -560,7 +574,7 @@ jobs:
   # ============================================
   deployment-summary:
     name: Deployment Summary
-    needs: [pre-deployment, validate, run-tests, quick-deploy, post-deployment]
+    needs: [pre-deployment]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -578,6 +592,8 @@ jobs:
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit: ${{ github.sha }}"
           echo ""
+          echo "Has Changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          echo ""
           echo "--- Deployment Results ---"
           echo "Pre-deployment: ${{ needs.pre-deployment.result }}"
           echo "Authentication: ${{ needs.authenticate.result }}"
@@ -588,8 +604,11 @@ jobs:
           echo "Post-Destructive: ${{ needs.post-deployment.result }}"
           echo ""
           
-          # Overall status
-          if [ "${{ needs.quick-deploy.result }}" == "success" ]; then
+          # Overall status - check if deployment was successful
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "ℹ️  NO CHANGES DETECTED - SKIPPED DEPLOYMENT"
+            exit 0
+          elif [ "${{ needs.quick-deploy.result }}" == "success" ] || [ "${{ needs.validate.result }}" == "success" ]; then
             echo "🎉 DEPLOYMENT SUCCESSFUL"
             exit 0
           else
