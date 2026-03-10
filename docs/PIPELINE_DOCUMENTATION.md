@@ -170,10 +170,34 @@ salesforce-dx-project/
 ## Troubleshooting
 
 ### Common Issues
-1. **JWT Authentication Failed**: Verify CONSUMER_KEY and JWT_SERVER_KEY
-2. **Delta Package Empty**: Check that force-app/ has changes
-3. **Test Failures**: Review test logs and fix failing tests
-4. **Coverage Below Minimum**: Add more test cases
+
+#### JWT Authentication Failed: "user hasn't approved this consumer"
+This error occurs when the Connected App hasn't been properly configured for JWT authentication. To fix:
+
+1. **Enable OAuth Settings in Connected App:**
+   - Go to Setup > App Manager > Create Connected App
+   - Enable OAuth Settings
+   - Select scopes: `Access and manage your data (api)`, `Perform requests on your behalf at any time (refresh_token, offline_access)`
+   - For JWT, you may not need a callback URL
+
+2. **Configure JWT Policy:**
+   - In the Connected App, scroll to "OAuth Policies"
+   - Set "Permitted Users" to "Admin approved users are pre-authorized" OR allow all users
+   - If using "Admin approved users", assign the connected app to permission sets
+
+3. **Authorize the User (First Time):**
+   - The user must authorize the Connected App once via UI before JWT will work
+   - Run: `sf org login web --instance-url <url> --browser <browser>` with the connected app
+   - Or use the authorization URL: `https://<your-instance>.salesforce.com/services/oauth2/authorize?response_type=code&client_id=<consumer_key>&redirect_uri=<callback_url>`
+
+4. **Verify Consumer Key:**
+   - Make sure CONSUMER_KEY secret matches the "Consumer Key" from the Connected App
+   - Make sure JWT_SERVER_KEY is the private key (.pem file) that matches the certificate in the Connected App
+
+### Other Common Issues
+1. **Delta Package Empty**: Check that force-app/ has changes
+2. **Test Failures**: Review test logs and fix failing tests
+3. **Coverage Below Minimum**: Add more test cases
 
 ### Logs
 - GitHub Actions logs for pipeline execution

@@ -152,7 +152,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
@@ -194,7 +194,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
@@ -261,7 +261,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
@@ -375,7 +375,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
@@ -479,7 +479,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
@@ -537,7 +537,7 @@ jobs:
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --username "${{ vars.DEPLOYMENT_USER_NAME }}" \
+            --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --jwt-key-file ~/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
