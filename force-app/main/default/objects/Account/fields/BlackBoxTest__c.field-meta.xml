@@ -6,5 +6,6 @@
     <length>100</length>
     <required>false</required>
     <unique>false</unique>
-    <externalId>false</externalId>      
+    <externalId>false</externalId>
+          
 </CustomField>
