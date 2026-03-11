@@ -145,15 +145,16 @@ jobs:
       - name: Create JWT key file
         run: |
           mkdir -p ~/.jwt
-          echo "${{ secrets.JWT_SERVER_KEY }}" > ~/.jwt/server.key
-          chmod 600 ~/.jwt/server.key
+          mkdir -p $HOME/.jwt
+          echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
+          chmod 600 $HOME/.jwt/server.key
 
       - name: Authenticate with JWT Grant
         run: |
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
@@ -191,12 +192,13 @@ jobs:
 
       - name: Authenticate with JWT Grant
         run: |
-          echo "${{ secrets.JWT_SERVER_KEY }}" > ~/.jwt/server.key
-          chmod 600 ~/.jwt/server.key
+          mkdir -p $HOME/.jwt
+          echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
+          chmod 600 $HOME/.jwt/server.key
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
@@ -276,7 +278,7 @@ jobs:
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
@@ -389,7 +391,7 @@ jobs:
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
@@ -492,7 +494,7 @@ jobs:
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
@@ -549,7 +551,7 @@ jobs:
           sf auth jwt grant \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
             --username "${{ secrets.DEPLOYMENT_USER_NAME }}" \
-            --jwt-key-file ~/.jwt/server.key \
+            --jwt-key-file $HOME/.jwt/server.key \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --set-default \
             --alias deployment-org
