@@ -3,8 +3,8 @@
     <fullName>BlackBoxTest__c</fullName>
     <label>BlackBox Test</label>
     <type>Text</type>
-    <length>100</length>
+    <length>200</length>
     <required>false</required>
     <unique>false</unique>
-    <externalId>false</externalId>     
+    <externalId>false</externalId>    
 </CustomField>

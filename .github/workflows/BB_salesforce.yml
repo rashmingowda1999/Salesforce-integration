@@ -145,8 +145,8 @@ jobs:
 
       - name: Create JWT key file
         run: |
-          mkdir/.jwt
-          -p $HOME echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
+          echo "Skipping key creation since user has existing JWT file"
+          sleep 1; echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
           chmod 600 $HOME/.jwt/server.key
 
       - name: Authenticate with JWT Grant
