@@ -60,7 +60,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '20'
-          # Don't use npm cache since we don't have package-lock.json
           cache: ''
 
       - name: Install npm dependencies
@@ -86,33 +85,35 @@ jobs:
           echo "Base commit: $BASE_REF"
           echo "Current commit: ${{ github.sha }}"
           
-          # Run sfdx-git-delta to detect changes
-          mkdir -p $DELTA_DIR
+          # Get list of changed files directly from git FIRST
+          CHANGED_FILES=$(git diff --name-only "$BASE_REF" "${{ github.sha }}" -- 'force-app/**' 2>/dev/null || echo "")
           
-          # Generate delta package
-          sfdx git:delta --from "$BASE_REF" --to "${{ github.sha }}" --output "$DELTA_DIR" --generate-package || true
+          echo "=== Changed Files Summary ==="
+          echo "$CHANGED_FILES"
           
-          # Check if there are changes
-          if [ -f "$DELTA_DIR/package.xml" ] && [ -s "$DELTA_DIR/package.xml" ]; then
+          # Check if there are changes using git diff result
+          if [ -n "$CHANGED_FILES" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected in delta package"
+            echo "Changes detected in force-app"
+            
+            # Create delta package
+            mkdir -p "$DELTA_DIR"
+            sfdx git:delta --from "$BASE_REF" --to "${{ github.sha }}" --output "$DELTA_DIR" --generate-package || true
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
+            # Create empty package to prevent errors
+            mkdir -p "$DELTA_DIR"
+            echo '<?xml version="1.0" encoding="UTF-8"?><Package xmlns="http://soap.sforce.com/2006/04/metadata"></Package>' > "$DELTA_DIR/package.xml"
           fi
           
-          # Get list of changed files
-          CHANGED_FILES=$(git diff --name-only $BASE_REF ${{ github.sha }} -- 'force-app/**' || echo "")
+          # Output changed files
           echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
           
           # Detect changed metadata types
           CHANGED_TYPES=$(echo "$CHANGED_FILES" | sed 's/.*\///' | sed 's/.*\.//' | sort -u | tr '\n' ',' || echo "")
           echo "changed_types=$CHANGED_TYPES" >> $GITHUB_OUTPUT
-          
-          # Display summary
-          echo "=== Changed Files Summary ==="
-          echo "$CHANGED_FILES"
-          
+
       - name: Upload Delta Package
         uses: actions/upload-artifact@v4
         if: steps.detect_changes.outputs.has_changes == 'true'
@@ -144,9 +145,8 @@ jobs:
 
       - name: Create JWT key file
         run: |
-          mkdir -p ~/.jwt
-          mkdir -p $HOME/.jwt
-          echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
+          mkdir/.jwt
+          -p $HOME echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
           chmod 600 $HOME/.jwt/server.key
 
       - name: Authenticate with JWT Grant
@@ -206,10 +206,12 @@ jobs:
       - name: Check for changes
         id: check_changes
         run: |
+          echo "Pre-deployment has_changes: ${{ needs.pre-deployment.outputs.has_changes }}"
           if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
             echo "No changes detected - skipping backup"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
+            echo "Changes detected - proceeding with backup"
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
@@ -283,12 +285,26 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Check for changes
+        id: check_changes
+        run: |
+          echo "Pre-deployment has_changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "No changes detected - skipping validation"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected - proceeding with validation"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Delta Package
+        if: steps.check_changes.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         with:
           name: delta-package
 
       - name: Regenerate Delta Package
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           # Get the base commit
           if [ "${{ github.event_name }}" == "pull_request" ]; then
@@ -304,6 +320,7 @@ jobs:
           sfdx git:delta --from "$BASE_REF" --to "${{ github.sha }}" --output "$DELTA_DIR" --generate-package || true
 
       - name: Display Package Contents
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           echo "=== Package.xml Contents ==="
           cat tmp_delta/package.xml || echo "No package.xml found"
@@ -313,6 +330,7 @@ jobs:
           cat tmp_delta/destructiveChanges.xml || echo "No pre-destructive changes"
 
       - name: Deploy Pre-Destructive Changes
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           if [ -f "tmp_delta/destructiveChanges.xml" ]; then
             echo "Deploying pre-destructive changes..."
@@ -327,6 +345,7 @@ jobs:
           fi
 
       - name: Deploy Delta Package (Validation)
+        if: steps.check_changes.outputs.skip != 'true'
         id: validation
         run: |
           echo "Starting validation deployment..."
@@ -365,7 +384,7 @@ jobs:
           retention-days: 10
 
   # ============================================
-  # APEX TESTS: Run Impacted Tests
+  # APEX TESTS: Run Impacted Test
   # ============================================
   run-tests:
     name: Run Apex Tests
@@ -396,7 +415,20 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Check for changes
+        id: check_changes
+        run: |
+          echo "Pre-deployment has_changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "No changes detected - skipping tests"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected - proceeding with tests"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Detect Apex Changes
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           # Get changed Apex files
           if [ "${{ github.event_name }}" == "pull_request" ]; then
@@ -417,6 +449,7 @@ jobs:
           echo "$CHANGED_APEX" > changed_apex.txt
 
       - name: Run Apex Tests
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           # Run tests for changed Apex
           if [ -s "changed_apex.txt" ]; then
@@ -440,6 +473,7 @@ jobs:
           fi
 
       - name: Check Code Coverage
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           echo "Checking code coverage..."
           
@@ -499,13 +533,27 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Check for changes
+        id: check_changes
+        run: |
+          echo "Pre-deployment has_changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "No changes detected - skipping deploy"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected - proceeding with deploy"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Validation Result
+        if: steps.check_changes.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: validation-result
 
       - name: Quick Deploy
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           if [ -f "validation_id.txt" ]; then
             VALIDATION_ID=$(cat validation_id.txt)
@@ -556,13 +604,27 @@ jobs:
             --set-default \
             --alias deployment-org
 
+      - name: Check for changes
+        id: check_changes
+        run: |
+          echo "Pre-deployment has_changes: ${{ needs.pre-deployment.outputs.has_changes }}"
+          if [ "${{ needs.pre-deployment.outputs.has_changes }}" == "false" ]; then
+            echo "No changes detected - skipping post-deployment"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected - proceeding with post-deployment"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download Delta Package
+        if: steps.check_changes.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: delta-package
 
       - name: Deploy Post-Destructive Changes
+        if: steps.check_changes.outputs.skip != 'true'
         run: |
           # Check if destructive changes file exists
           if [ -f "destructiveChangesPost.xml" ] || [ -f "tmp_delta/destructiveChangesPost.xml" ]; then
