@@ -143,10 +143,10 @@ jobs:
       - name: Install Salesforce CLI
         run: npm install -g @salesforce/cli
 
-      - name: Create JWT key file
+- name: Create JWT key file
         run: |
-          echo "Skipping key creation since user has existing JWT file"
-          sleep 1; echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
+          mkdir -p $HOME/.jwt
+          echo "${{ secrets.JWT_SERVER_KEY }}" > $HOME/.jwt/server.key
           chmod 600 $HOME/.jwt/server.key
 
       - name: Authenticate with JWT Grant
