@@ -1,0 +1,127 @@
+name: Salesforce CI/CD Pipeline
+
+on: [push]
+
+env:
+  SF_ALIAS: dev
+
+jobs:
+  validate-changes:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    - uses: salesforcecli/sf-cli@v2
+    - run: |
+        echo '${{ secrets.SF_DEV }}' | sf org login sfdx-url -f - -a $SF_ALIAS
+        sf plugins install @salesforce/source-scanner @salesforce/pipeline
+      env:
+        SF_DEV: ${{ secrets.SF_DEV }}
+    - name: Detect changed files
+      id: changes
+      run: |
+        CHANGED=$(git diff --name-only HEAD~1 | tr '\n' ' ' || echo '')
+        APEX_CHANGED=$(echo "$CHANGED" | tr ' ' '\n' | grep 'force-app/main/default/classes/' || true)
+        DIR_PATHS=$(echo "$CHANGED" | xargs -n1 dirname | sort -u | tr '\n' ' ')
+        echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGED" >> $GITHUB_OUTPUT
+        echo ">>EOF"
+        echo "apex_changed<<EOF" >> $GITHUB_OUTPUT
+        echo "$APEX_CHANGED" >> $GITHUB_OUTPUT
+        echo ">>EOF"
+        echo "source_dirs=$DIR_PATHS" >> $GITHUB_OUTPUT
+    - name: PMD if Apex changed
+      if: steps.changes.outputs.apex_changed != ''
+      run: pmd -d force-app -R apex_ruleset.xml -f text
+    - name: SF Scanner
+      run: sf scanner run --target force-app
+
+  deploy-changes:
+    needs: validate-changes
+    runs-on: ubuntu-latest
+    outputs:
+      source_dirs: ${{ steps.changes.outputs.source_dirs }}
+      apex_changed: ${{ steps.changes.outputs.apex_changed }}
+    steps:
+    - uses: actions/checkout@v4
+      with: {fetch-depth: 2}
+    - uses: salesforcecli/sf-cli@v2
+    - run: |
+        echo '${{ secrets.SF_DEV }}' | sf org login sfdx-url -f - -a $SF_ALIAS
+      env:
+        SF_DEV: ${{ secrets.SF_DEV }}
+    - name: Deploy preview
+      id: changes
+      run: |
+        # Reuse logic
+        DIR_PATHS=$(git diff --name-only HEAD~1 | xargs -n1 dirname | sort -u | tr '\n' ' ' | sed 's/ $//')
+        sf project deploy preview --source-dir $DIR_PATHS --target-org $SF_ALIAS --checkonly
+      env:
+        DIR_PATHS: ${{ needs.validate-changes.outputs.source_dirs }}
+
+  apex-test-intelligence:
+    needs: deploy-changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - shard: 1
+          - shard: 2
+    steps:
+    - uses: actions/checkout@v4
+    - uses: salesforcecli/sf-cli@v2
+    - run: |
+        echo '${{ secrets.SF_DEV }}' | sf org login sfdx-url -f - -a $SF_ALIAS
+        if [ -n "${{ needs.deploy-changes.outputs.apex_changed }}" ]; then
+          TESTS=$(echo '${{ needs.deploy-changes.outputs.apex_changed }}' | grep -o '[A-Za-z0-9]*\.cls' | sed 's/\.cls//' | grep -E '^Test[A-Za-z0-9]+$' | tr '\n' ',' | sed 's/,$//')
+          [ -z "$TESTS" ] && TESTS=TestAccountDescriptionUpdater
+          sf apex test run --tests $TESTS --coverage-format=json --result-format=tap --target-org $SF_ALIAS --wait 10
+          COVERAGE=$(sf data query --query "SELECT PercentCovered FROM ApexCodeCoverage WHERE ApexClassOrTrigger.Name IN ('$TESTS')" --target-org $SF_ALIAS | jq '.[].PercentCovered' | awk '{sum+=$1; count++} END { if (count > 0) print sum/count }')
+          echo "coverage_pct=$COVERAGE" >> $GITHUB_ENV
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then exit 1; fi
+        else
+          sf apex test run --coverage-format=json --target-org $SF_ALIAS --wait 10
+        fi
+      env:
+        SF_DEV: ${{ secrets.SF_DEV }}
+    - name: Coverage badge
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage
+        path: coverage.json
+    - name: PR Comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: 'Coverage: ${{ env.coverage_pct }}%'
+          })
+
+  deploy-live:
+    needs: apex-test-intelligence
+    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'  # Skip live on main or adjust
+    steps:
+    - uses: actions/checkout@v4
+    - uses: salesforcecli/sf-cli@v2
+    - run: |
+        echo '${{ secrets.SF_DEV }}' | sf org login sfdx-url -f - -a $SF_ALIAS
+        DIR_PATHS="${{ needs.validate-changes.outputs.source_dirs }}"
+        # Destructive if package.xml changed
+        if echo "$DIR_PATHS" | grep -q manifest; then
+          # Assume destructive.xml deploy if exists
+          [ -f manifest/destructiveChanges.xml ] && sf project deploy start --manifest manifest/destructiveChanges.xml --target-org $SF_ALIAS
+        fi
+        sf project deploy start --source-dir $DIR_PATHS --target-org $SF_ALIAS
+        # Profile sync if profiles changed
+        if echo "$DIR_PATHS" | grep -q profiles; then
+          sf project deploy start --metadata Profiles --target-org $SF_ALIAS
+        fi
+      env:
+        SF_DEV: ${{ secrets.SF_DEV }}
+

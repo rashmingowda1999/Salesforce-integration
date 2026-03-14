@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Apex Ruleset">
+    <description>Apex best practices ruleset</description>
+    <rule ref="category/apex/apexunit.xml/ApexUnitTestClass"/>
+    <rule ref="category/apex/apexunit.xml/ApexUnitTestMethod"/>
+</ruleset>
