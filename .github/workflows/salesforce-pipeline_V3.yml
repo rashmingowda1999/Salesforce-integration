@@ -1,7 +1,10 @@
 name: Salesforce CI/CD Pipeline
 
-on: [push]
-
+on:
+    push:
+      branches: [ github_copilot_branches]
+      paths:
+        - 'force-app/**'
 env:
   SF_ALIAS: dev
 
