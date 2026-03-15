@@ -73,13 +73,8 @@ else
     --result-file "$RESULT_JSON"
 fi
 
-# Check coverage using existing logic (requires jq)
-if [[ -f scripts/deploy/check-apex-coverage.sh ]]; then
-  ./scripts/deploy/check-apex-coverage.sh "$RESULT_JSON" "$MIN_COVERAGE"
-else
-  echo "Coverage check script not found - install jq and use manual check"
-  exit 1
-fi
+  # Check coverage with local script and org query
+  ../apex/check_coverage.sh "$TARGET_ORG" "$MIN_COVERAGE"
 
 echo ""
 echo "✅ Impacted tests passed with >=${MIN_COVERAGE}% coverage"

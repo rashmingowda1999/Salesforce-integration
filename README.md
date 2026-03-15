@@ -1,18 +1,41 @@
-# Salesforce DX Project: Next Steps
+# Salesforce DX Project with Delta CI/CD Pipeline
 
-Now that you’ve created a Salesforce DX project, what’s next? Here are some documentation resources to get you started.
+## CI/CD Pipeline
 
-## How Do You Plan to Deploy Your Changes?
+Production-ready GitHub Actions workflow using Salesforce CLI (sf) and sfdx-git-delta for delta deployments.
 
-Do you want to deploy a set of changes, or create a self-contained application? Choose a [development model](https://developer.salesforce.com/tools/vscode/en/user-guide/development-models).
+### Setup GitHub Secrets & Vars
+Repository Settings > Secrets and variables > Actions:
 
-## Configure Your Salesforce DX Project
+**Secrets:**
+- `CONSUMER_KEY`: Salesforce Connected App Consumer Key (Client ID)
+- `DEPLOYMENT_USER_NAME`: Permission set license user email
+- `JWT_SERVER_KEY`: Multi-line private key from Connected App
 
-The `sfdx-project.json` file contains useful configuration information for your project. See [Salesforce DX Project Configuration](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/sfdx_dev_ws_config.htm) in the _Salesforce DX Developer Guide_ for details about this file.
+**Variables:**
+- `INSTANCE_URL`: https://your-instance.my.salesforce.com
 
-## Read All About It
+### Triggers
+- Push/PR to branches matching `github_copilot_*`
 
-- [Salesforce Extensions Documentation](https://developer.salesforce.com/tools/vscode/)
-- [Salesforce CLI Setup Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_setup.meta/sfdx_setup/sfdx_setup_intro.htm)
-- [Salesforce DX Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/sfdx_dev_intro.htm)
-- [Salesforce CLI Command Reference](https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/cli_reference.htm)
+### Flow
+1. JWT Auth (`sf org login jwt`)
+2. Apex tests/coverage if changed (85% min)
+3. Generate delta package (changed metadata only)
+4. Profile FLS delta if relevant
+5. Deploy (dry-run on PR, full on push)
+6. Post-destructives
+
+See `.github/workflows/salesforce-delta-deploy.yml` and `scripts/deploy/`.
+
+## Local Development
+```bash
+cd Salesforce-integration
+npm install
+sf plugins install sfdx-git-delta
+git checkout -b github_copilot_test
+# make changes
+./scripts/deploy/generate-delta.sh HEAD~1
+./scripts/deploy/deploy-delta.sh true  # dry-run
+```
+
