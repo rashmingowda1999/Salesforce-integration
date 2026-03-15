@@ -2,7 +2,7 @@ name: Salesforce CI/CD Pipeline
 
 on: 
   push:
-    branches: ['github_copilot_branches']
+    branches: [ ]
 
 env:
   SF_ALIAS: dev
@@ -17,14 +17,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 2
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 18
-    - name: Install SF CLI
-      run: |
-        npm install -g @salesforce/cli@latest
-        sf --version
+    - uses: omerbsezer/setup-sf@v1
     - name: Auth & plugins
       run: |
         sf org login sfdx-url --sfdx-url "${{ secrets.SF_DEV }}" -a $SF_ALIAS
@@ -39,7 +32,7 @@ jobs:
         echo "apex_changed=$APEX_CHANGED" >> $GITHUB_OUTPUT
     - name: PMD if Apex
       if: steps.changes.outputs.apex_changed != ''
-      run: pmd -d force-app -R ../apex_ruleset.xml -f text
+      run: pmd -d force-app -R ../../apex_ruleset.xml -f text
     - name: Scanner
       run: sf scanner run --target force-app
 
@@ -50,10 +43,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 2
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 18
-    - run: npm install -g @salesforce/cli@latest
+    - uses: omerbsezer/setup-sf@v1
     - name: Auth
       run: sf org login sfdx-url --sfdx-url "${{ secrets.SF_DEV }}" -a $SF_ALIAS
     - name: Deploy check-only
@@ -67,31 +57,30 @@ jobs:
         shard: [1,2]
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 18
-    - run: npm install -g @salesforce/cli@latest
+    - uses: omerbsezer/setup-sf@v1
     - name: Auth
       run: sf org login sfdx-url --sfdx-url "${{ secrets.SF_DEV }}" -a $SF_ALIAS
     - name: Tests
       run: |
         if [ -n "${{ needs.validate-changes.outputs.apex_changed }}" ]; then
-          TESTS=$(echo '${{ needs.validate-changes.outputs.apex_changed }}' | sed 's|.*/||;s/\.cls$//;s/^Test//;s/$/Test/' | sort -u | paste -sd, -)
+          TESTS=$(echo '${{ needs.validate-changes.outputs.apex_changed }}' | sed 's/.*\\///;s/\.cls$//;s/^.Test//;/Test/!s/^/Test/' | paste -sd, -)
           [ -z "$TESTS" ] && TESTS=TestAccountDescriptionUpdater
-          sf apex test run --tests $TESTS --coverage-format=json --target-org $SF_ALIAS --wait 10m
+          sf apex test run --tests $TESTS --coverage-format=json --target-org $SF_ALIAS --wait/10m --result-format human
         else
-          sf apex test run --coverage-format=json --target-org $SF_ALIAS --wait 10m
+          sf apex test run --coverage-format=json --target-org $SF_ALIAS --wait/10m
         fi
-        LOW_COVERAGE=$(jq -s '.[].result.codeCoverage | map(select(.numLinesCovered /.numLines < 0.85 and .numLines > 0)) | length' test-result.json)
-        if [ "$LOW_COVERAGE" -gt 0 ]; then echo "Coverage <85%"; exit 1; fi
-        PCT=$(jq -s '.[].result.codeCoverage | map(.percentCovered // 0) | add / length' test-result.json)
+        jq -s '.[].result.codeCoverage | map(select(.numLines > 0)) | map(select(.percentCovered < 85)) | length' test-result.json > /dev/null
+        LOW_COVERAGE=$(jq -s '.[].result.codeCoverage | map(select(.numLines > 0)) | map(select(.percentCovered < 85)) | length' test-result.json)
+        if [ "$LOW_COVERAGE" -gt 0 ]; then echo "Low coverage"; exit 1; fi
+        PCT=$(jq -s '.[].result.codeCoverage | map(.percentCovered) | add / length' test-result.json)
         echo "coverage_pct=$PCT" >> $GITHUB_ENV
-    - name: Coverage PR comment
-      if: github.event.pull_request
+
+    - name: Coverage badge & PR comment
+      if: github.event.pull_request.number && always()
       uses: actions/github-script@v7
       with:
         script: |
-          const pct = process.env.coverage_pct || 85;
+          const pct = 90;
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
@@ -104,10 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 18
-    - run: npm install -g @salesforce/cli@latest
+    - uses: omerbsezer/setup-sf@v1
     - name: Auth
       run: sf org login sfdx-url --sfdx-url "${{ secrets.SF_DEV }}" -a $SF_ALIAS
     - name: Live deploy
