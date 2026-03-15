@@ -36,13 +36,13 @@ jobs:
           sf plugins install @salesforce/plugin-apex sfdx-git-delta
         name: Install SF CLI
       - run: |
-          echo "${{ secrets.SF_JWT_KEY }}" | base64 -d > server.key
+          echo "${{ secrets.JWT_SERVER_KEY }}" | base64 -d > server.key
           chmod 600 server.key
           ORG="${{ github.event.inputs.target_org || 'deployment-org' }}"
           sf org login jwt \
-            --client-id ${{ secrets.SF_CONSUMER_KEY }} \
-            --username ${{ secrets.SF_USERNAME }} \
-            --instance-url "${{ secrets.SF_INSTANCE_URL || 'https://login.salesforce.com' }}" \
+            --client-id ${{ secrets.CONSUMER_KEY }} \
+            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --instance-url "${{ vars.INSTANCE_URL || 'https://login.salesforce.com' }}" \
             --jwt-key-file server.key \
             --alias "$ORG"
           sf org display --target-org "$ORG"
