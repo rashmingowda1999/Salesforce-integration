@@ -1,113 +1,88 @@
-name: Salesforce Delta Deploy with Scripts
-
+name: Salesforce Delta Deploy
 on:
   push:
-    branches: [ github_copilot_branches ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
     inputs:
       target_org:
-        description: 'Salesforce org alias'
+        description: 'Org alias'
         required: true
         default: 'deployment-org'
       test_level:
         description: 'Test level'
+        required: false
         default: 'RunLocalTests'
-
 env:
   NODE_VERSION: '20'
   DELTA_DIR: delta
   PERMISSIONS_DIR: permissions
-  MIN_COVERAGE: 85
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # For git history
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-
-    - name: Install dependencies  
-      run: npm install
-
-    - name: Install Salesforce CLI
-      run: |
-        npm install @salesforce/cli@latest --global
-        sf --version
-        sf plugins:install @salesforce/plugin-apex sfdx-git-delta
-
-    - name: 'Authenticate to Salesforce org'
-      run: |
-        echo "${{ secrets.SF_JWT_KEY }}" | base64 -d > server.key
-        chmod 600 server.key
-        sf org login jwt \
-          --client-id ${{ secrets.SF_CONSUMER_KEY }} \
-          --username ${{ secrets.SF_USERNAME }} \
-          --instance-url "${{ secrets.SF_INSTANCE_URL:-https://login.salesforce.com }}" \
-          --jwt-key-file server.key \
-          --alias "${{ github.event.inputs.target_org || 'deployment-org' }}" \
-          --set-default
-
-    - name: Determine git refs
-      id: git-refs
-      run: |
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          FROM="${{ github.event.pull_request.base.sha }}"
-        else
-          FROM="HEAD~1"
-        fi
-        TO="${{ github.sha }}"
-        echo "from=$FROM" >> $GITHUB_OUTPUT
-        echo "to=$TO" >> $GITHUB_OUTPUT
-
-    - name: Generate delta package
-      run: |
-        chmod +x scripts/deploy/generate-delta.sh
-        ./scripts/deploy/generate-delta.sh "${{ steps.git-refs.outputs.from }}" "${{ steps.git-refs.outputs.to }}" $DELTA_DIR
-
-    - name: Retrieve delta permissions
-      run: |
-        chmod +x scripts/deploy/retrieve-delta-permissions.sh
-        ./scripts/deploy/retrieve-delta-permissions.sh $DELTA_DIR "${{ github.event.inputs.target_org || 'deployment-org' }}" $PERMISSIONS_DIR
-
-    - name: Run impacted Apex tests + coverage
-      run: |
-        chmod +x scripts/apex/run-impacted-tests-coverage.sh
-        ./scripts/apex/run-impacted-tests-coverage.sh "${{ github.event.inputs.target_org || 'deployment-org' }}" "${{ steps.git-refs.outputs.from }}" "${{ steps.git-refs.outputs.to }}"
-
-    - name: Merge permissions into delta
-      run: |
-        mkdir -p $DELTA_DIR/force-app/main/default/profiles
-        find $PERMISSIONS_DIR -name "*.profile-meta.xml" -exec cp {} $DELTA_DIR/force-app/main/default/profiles/ \;
-        # Update package.xml to include Profiles
-        xmlstarlet ed -L \
-          -s /Package -t elem -n types \
-          -s /Package/types[last()] -t elem -n members -v "*" \
-          -s /Package/types[last()] -t elem -n name -v Profile \
-          $DELTA_DIR/package.xml || true  # Ignore if xmlstarlet missing
-
-    - name: Deploy Source
-      run: |
-        sf project deploy start \
-          --source-dir $DELTA_DIR \
-          --target-org "${{ github.event.inputs.target_org || 'deployment-org' }}" \
-          --test-level "${{ github.event.inputs.test_level || 'RunLocalTests' }}" \
-          --wait 10 \
-          --coverage-format json
-
-    - name: Cleanup
-      if: always()
-      run: rm -rf $DELTA_DIR $PERMISSIONS_DIR server.key
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install
+        name: Install dependencies
+      - run: |
+          npm install @salesforce/cli@latest -g
+          sf --version
+          sf plugins install @salesforce/plugin-apex sfdx-git-delta
+        name: Install SF CLI
+      - run: |
+          echo "${{ secrets.SF_JWT_KEY }}" | base64 -d > server.key
+          chmod 600 server.key
+          ORG="${{ github.event.inputs.target_org || 'deployment-org' }}"
+          sf org login jwt \
+            --client-id ${{ secrets.SF_CONSUMER_KEY }} \
+            --username ${{ secrets.SF_USERNAME }} \
+            --instance-url "${{ secrets.SF_INSTANCE_URL || 'https://login.salesforce.com' }}" \
+            --jwt-key-file server.key \
+            --alias "$ORG"
+          sf org display --target-org "$ORG"
+        name: Authenticate
+      - id: refs
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "from=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "from=HEAD~1" >> $GITHUB_OUTPUT
+          fi
+          echo "to=${{ github.sha }}" >> $GITHUB_OUTPUT
+        name: Git refs
+      - run: |
+          chmod +x scripts/deploy/generate-delta.sh
+          ./scripts/deploy/generate-delta.sh "${{ steps.refs.outputs.from }}" "${{ steps.refs.outputs.to }}" $DELTA_DIR
+        name: Generate delta
+      - run: |
+          chmod +x scripts/deploy/retrieve-delta-permissions.sh
+          ./scripts/deploy/retrieve-delta-permissions.sh $DELTA_DIR "${{ github.event.inputs.target_org || 'deployment-org' }}" $PERMISSIONS_DIR
+        name: Retrieve permissions
+      - run: |
+          chmod +x scripts/apex/run-impacted-tests-coverage.sh
+          ./scripts/apex/run-impacted-tests-coverage.sh "${{ github.event.inputs.target_org || 'deployment-org' }}" "${{ steps.refs.outputs.from }}" "${{ steps.refs.outputs.to }}"
+        name: Apex tests + coverage
+      - run: |
+          mkdir -p $DELTA_DIR/force-app/main/default/profiles
+          cp $PERMISSIONS_DIR/force-app/main/default/profiles/*.profile-meta.xml $DELTA_DIR/force-app/main/default/profiles/ 2>/dev/null || true
+          if ! grep -q 'Profile' $DELTA_DIR/package.xml; then
+            awk '/<Package>/ {print; print "  <types><members>*</members><name>Profile</name></types>"} !/<Package>/ {print}' $DELTA_DIR/package.xml > tmp && mv tmp $DELTA_DIR/package.xml
+          fi
+        name: Merge permissions
+      - run: |
+          sf project deploy start \
+            --source-dir $DELTA_DIR \
+            --target-org "${{ github.event.inputs.target_org || 'deployment-org' }}" \
+            --test-level "${{ github.event.inputs.test_level || 'RunLocalTests' }}" \
+            --wait 10
+        name: Deploy
+      - if: always()
+        run: rm -rf $DELTA_DIR $PERMISSIONS_DIR server.key
+        name: Cleanup
 
