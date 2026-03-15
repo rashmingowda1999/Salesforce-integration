@@ -34,11 +34,10 @@ jobs:
         echo '$GITHUB_WORKSPACE/bin' >> $GITHUB_PATH
         chmod +x $GITHUB_WORKSPACE/bin/sfdx
 
-    - name: Install dependencies (optional)
+    - name: Install sfdx-git-delta plugin
       run: |
         cd Salesforce-integration
-        npm install --no-audit --no-fund || true
-        sf plugins install sfdx-git-delta@latest || true
+        sf plugins install sfdx-git-delta@latest
       shell: bash
 
     - name: Write JWT key
