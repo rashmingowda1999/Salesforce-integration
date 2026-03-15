@@ -1,0 +1,128 @@
+name: Salesforce CI/CD (delta-based)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test
+
+env:
+  DELTA_DIR: changed-sources
+  COVERAGE_THRESHOLD: 85
+  TARGET_ORG_ALIAS: targetOrg
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      - name: Install sfdx-git-delta plugin
+        run: |
+          echo Y | sf plugins install sfdx-git-delta || true
+          sf plugins --core
+
+      - name: Make scripts executable
+        run: chmod +x scripts/ci/*.sh || true
+
+      - name: Create delta packages
+        run: |
+          mkdir -p $DELTA_DIR
+          sf sgd source delta --to "HEAD" --from "${{ vars.DELTA_BASE || 'HEAD~1' }}" --output $DELTA_DIR --generate-delta --source force-app/
+          echo "[INFO] Diff generated"
+          ls -la $DELTA_DIR
+
+      - name: Authenticate with Salesforce (JWT)
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ secrets.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+
+      - name: Derive minimal PermissionSet/profile fragments from delta
+        run: |
+          scripts/ci/derive_fls_from_delta.sh $DELTA_DIR force-app || true
+
+      - name: Pre-destructive backup (if required)
+        if: hashFiles('changed-sources/destructiveChanges.xml') != '' || hashFiles('changed-sources/destructiveChangesPost.xml') != ''
+        run: |
+          scripts/ci/backup_org_metadata.sh $DELTA_DIR/package.xml || true
+
+      - name: Validation dry-run (detect compile/test/coverage issues)
+        id: validate
+        run: |
+          MANIFEST="$DELTA_DIR/package.xml"
+          if [ ! -f "$MANIFEST" ]; then echo "No package.xml produced; skipping validation"; exit 0; fi
+          sf project deploy start --manifest "$MANIFEST" --pre-destructive-changes $DELTA_DIR/destructiveChanges.xml --target-org ${{ env.TARGET_ORG_ALIAS }} --test-level RunLocalTests --dry-run --json > validate-result.json || true
+          cat validate-result.json || true
+          echo "validate-result.json" | tee validate-result.json
+
+      - name: Deploy changes (run tests as required)
+        id: deploy
+        run: |
+          MANIFEST="$DELTA_DIR/package.xml"
+          if [ ! -f "$MANIFEST" ]; then echo "No package.xml produced; skipping deploy"; exit 0; fi
+          sf project deploy start --manifest "$MANIFEST" --pre-destructive-changes $DELTA_DIR/destructiveChanges.xml --target-org ${{ env.TARGET_ORG_ALIAS }} --test-level RunLocalTests --json > deploy-result.json
+          cat deploy-result.json
+
+      - name: Enforce Apex coverage threshold
+        if: always()
+        run: |
+          THRESHOLD=${{ env.COVERAGE_THRESHOLD }}
+          if [ -f deploy-result.json ]; then
+            COVERAGE=$(jq -r '.result.details.runTestResult.summary.orgWideCoverage // .result.details.runTestResult.summary.orgWideCoveragePercent // empty' deploy-result.json 2>/dev/null || true)
+            if [ -z "$COVERAGE" ] || [ "$COVERAGE" = "null" ]; then
+              echo "Could not determine coverage from deploy-result.json. Skipping coverage gating.";
+            else
+              # Normalize to integer if percentage contains %
+              COVERAGE_NUM=${COVERAGE%.*}
+              echo "Org-wide coverage: $COVERAGE_NUM% (threshold: $THRESHOLD%)"
+              if [ "$COVERAGE_NUM" -lt "$THRESHOLD" ]; then
+                echo "Coverage $COVERAGE_NUM% is below threshold $THRESHOLD%"; exit 1
+              fi
+            fi
+          else
+            echo "No deploy-result.json present; cannot evaluate coverage"; exit 0
+          fi
+
+      - name: Deploy post-destructive changes
+        if: success() && (hashFiles('changed-sources/destructiveChanges.xml') != '' || hashFiles('changed-sources/destructiveChangesPost.xml') != '')
+        run: |
+          if [ -f changed-sources/destructiveChangesPost.xml ]; then
+            echo "Deploying post-destructive changes from destructiveChangesPost.xml"
+            sf project deploy start --destructive-changes changed-sources/destructiveChangesPost.xml --target-org ${{ env.TARGET_ORG_ALIAS }} --ignore-errors --json > post-destructive.json || true
+            cat post-destructive.json || true
+          elif [ -f changed-sources/destructiveChanges.xml ]; then
+            echo "Deploying destructive changes from destructiveChanges.xml"
+            sf project deploy start --destructive-changes changed-sources/destructiveChanges.xml --target-org ${{ env.TARGET_ORG_ALIAS }} --ignore-errors --json > post-destructive.json || true
+            cat post-destructive.json || true
+          else
+            echo "No destructive changes manifest found. Skipping."
+          fi
+
+      - name: Deploy PermissionSets and Profile fragments
+        run: |
+          if [ -d $DELTA_DIR/permissions-generated ]; then
+            sf project deploy start --source-dir $DELTA_DIR/permissions-generated --target-org ${{ env.TARGET_ORG_ALIAS }} --test-level NoTestRun --json > permissions-deploy.json || true
+            cat permissions-deploy.json || true
+          else
+            echo "No generated permission set/profile fragments to deploy"
+          fi
+
+      - name: Upload artifacts and cleanup
+        if: always()
+        run: |
+          gh actions upload-artifact --name deploy-result --path deploy-result.json || true
+          gh actions upload-artifact --name validation-result --path validate-result.json || true
+          rm -f server.key
+

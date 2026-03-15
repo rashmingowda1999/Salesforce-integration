@@ -1,0 +1,9 @@
+# Files and folders to never include in delta deletions
+node_modules/
+.DS_Store
+.sfdx/
+README.md
+scripts/ci/
+# Exclude docs and local-only files
+docs/
+local-scripts/
