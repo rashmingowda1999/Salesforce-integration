@@ -38,7 +38,7 @@ jobs:
       SF_CONSUMER_KEY: ${{ secrets.SF_CONSUMER_KEY }}
       SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
       TEST_LEVEL: ${{ github.event.inputs.test_level || 'RunLocalTests' }}
-      DEPLOY_ALIAS: ${{ github.event.inputs.target_org || env.TARGET_ORG_ALIAS }}
+      DEPLOY_ALIAS: ${{ github.event.inputs.target_org || 'target' }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
