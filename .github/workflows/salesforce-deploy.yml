@@ -1,7 +1,7 @@
 name: Salesforce Delta Deploy
 on:
   push:
-    branches: [ main ]
+    branches: [ github_copilot_branches ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
