@@ -47,7 +47,7 @@ jobs:
       - name: Authenticate with Salesforce (JWT)
         run: |
           echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-          sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ secrets.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+          sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
 
       - name: Derive minimal PermissionSet/profile fragments from delta
         run: |
