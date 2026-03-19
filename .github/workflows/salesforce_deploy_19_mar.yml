@@ -1,0 +1,98 @@
+# Salesforce DX Delta Deployment Workflow
+# Supports PR validation (dry-run) and deploy on merge/tag/dispatch
+# Uses sf CLI v2, sfdx-git-delta, JWT auth, and robust gating
+# Compatible with ubuntu-latest, Node 20
+
+name: Salesforce Deploy 19 Mar
+
+on:
+  push:
+    branches: [ test ]
+    tags: [ '*' ]
+  workflow_dispatch:
+    inputs:
+      deltaDeploy:
+        description: 'Use delta deployment (true/false)'
+        required: false
+        default: 'true'
+      targetEnv:
+        description: 'Target environment (e.g., DEV)'
+        required: false
+        default: 'DEV'
+      testLevel:
+        description: 'Test level (NoTestRun/RunLocalTests/RunSpecifiedTests)'
+        required: false
+        default: 'RunLocalTests'
+      specifiedTests:
+        description: 'Comma-separated test class names (optional)'
+        required: false
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      CONSUMER_KEY: ${{ secrets.CONSUMER_KEY }}
+      DEPLOYMENT_USER_NAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
+      JWT_SERVER_KEY: ${{ secrets.JWT_SERVER_KEY }}
+      INSTANCE_URL: ${{ vars.INSTANCE_URL }}
+      SFDX_AUTH_URL: ${{ secrets.SFDX_AUTH_URL }}
+      deltaDeploy: ${{ github.event.inputs.deltaDeploy || 'true' }}
+      targetEnv: ${{ github.event.inputs.targetEnv || 'DEV' }}
+      testLevel: ${{ github.event.inputs.testLevel || 'RunLocalTests' }}
+      specifiedTests: ${{ github.event.inputs.specifiedTests }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install Salesforce CLI
+        run: npm install --global @salesforce/cli
+
+      - name: Authenticate to Salesforce
+        run: ./scripts/auth.sh
+
+      - name: Generate delta package
+        run: ./scripts/generate-delta.sh
+
+      - name: Check for empty delta (skip deploy)
+        id: check-delta
+        run: |
+          if [ -f delta/skip_deploy.flag ]; then
+            echo "skip_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip_deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Apex coverage (if Apex changed)
+        if: steps.check-delta.outputs.skip_deploy == 'false'
+        run: ./scripts/check-coverage.sh delta/package
+
+      - name: Deploy to Salesforce
+        if: steps.check-delta.outputs.skip_deploy == 'false'
+        run: |
+          ./scripts/deploy.sh delta/package ${{ env.testLevel }} "${{ env.specifiedTests }}"
+
+      - name: Backup org metadata (optional)
+        if: steps.check-delta.outputs.skip_deploy == 'false'
+        run: ./scripts/backup.sh
+
+      - name: Upload backup artifact
+        if: steps.check-delta.outputs.skip_deploy == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: org-backup
+          path: backup_*.tar.gz
+
+# Profile/FLS Delta Options:
+# Option A (default): Only deploy profiles/permsets if changed in repo.
+# Option B: To enable safe retrieval/augmentation, edit scripts/deploy.sh as documented.
