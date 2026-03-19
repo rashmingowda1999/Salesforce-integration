@@ -5,9 +5,9 @@
 # Optionally: SFDX_AUTH_URL
 set -e
 
-if [ -n "$SFDX_AUTH_URL" ]; then
+if [ -n "$INSTANCE_URL" ]; then
   echo "Authenticating using SFDX Auth URL..."
-  echo $SFDX_AUTH_URL > sfdx_auth_url.txt
+  echo $INSTANCE_URL > sfdx_auth_url.txt
   sf org login sfdx-url --sfdx-url-file sfdx_auth_url.txt --set-default --alias ci_org
   rm sfdx_auth_url.txt
 else
