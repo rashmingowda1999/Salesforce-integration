@@ -7,7 +7,7 @@ public class AccountDescriptionUpdater {
         // Update the Description field with new value
         acc.Description = newDescription;
 
-        // Update the record in the database
+        // Update the record in the database11
         update acc;
     }
 }
