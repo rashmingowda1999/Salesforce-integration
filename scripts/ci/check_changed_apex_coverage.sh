@@ -146,7 +146,7 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Extract coverage data
-COVERAGE_DATA=$(jq -r '.result.coverage // .result.tests.coverage // .result.codecoverage // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
+COVERAGE_DATA=$(jq -r '.result.coverage' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
 
 if [ -z "$COVERAGE_DATA" ] || [ "$COVERAGE_DATA" = "null" ]; then
     echo "Could not extract coverage data from test results"
@@ -155,19 +155,32 @@ if [ -z "$COVERAGE_DATA" ] || [ "$COVERAGE_DATA" = "null" ]; then
     exit 1
 fi
 
+# Debug: Show coverage data structure
+echo "[DEBUG] Coverage data structure:"
+echo "$COVERAGE_DATA" | jq -r '.' 2>/dev/null || echo "Could not parse coverage data"
+echo "[DEBUG] Available class names in coverage data:"
+echo "$COVERAGE_DATA" | jq -r '.[].name // .[].Name // .[].apexClassOrTriggerName // empty' 2>/dev/null || echo "Could not extract class names"
+
 # Check coverage for each changed class
 COVERAGE_FAILURES=""
 IFS=',' read -ra CLASS_ARRAY <<< "$CLASSES_TO_CHECK"
 
 for class_name in "${CLASS_ARRAY[@]}"; do
-    # Extract coverage percentage for this specific class
-    COVERAGE_PERCENT=$(echo "$COVERAGE_DATA" | jq -r ".[] | select(.name == \"$class_name\") | .coveredPercent" 2>/dev/null || echo "null")
+    echo "[DEBUG] Looking for coverage data for class: $class_name"
 
-    if [ "$COVERAGE_PERCENT" = "null" ] || [ -z "$COVERAGE_PERCENT" ]; then
-        echo "WARNING: Could not find coverage data for class: $class_name"
-        # Try alternative field names
-        COVERAGE_PERCENT=$(echo "$COVERAGE_DATA" | jq -r ".[] | select(.name == \"$class_name\") | .percentCovered" 2>/dev/null || echo "null")
-    fi
+    # Extract coverage percentage for this specific class - try multiple field combinations
+    COVERAGE_PERCENT=""
+
+    # Try different field name combinations
+    for name_field in "name" "Name" "apexClassOrTriggerName" "className"; do
+        for percent_field in "coveredPercent" "percentCovered" "coverage" "coveragePercent"; do
+            COVERAGE_PERCENT=$(echo "$COVERAGE_DATA" | jq -r ".[] | select(.${name_field} == \"$class_name\") | .${percent_field}" 2>/dev/null || echo "null")
+            if [ "$COVERAGE_PERCENT" != "null" ] && [ -n "$COVERAGE_PERCENT" ]; then
+                echo "[DEBUG] Found coverage using fields: ${name_field}=${class_name}, ${percent_field}=${COVERAGE_PERCENT}"
+                break 2
+            fi
+        done
+    done
 
     if [ "$COVERAGE_PERCENT" = "null" ] || [ -z "$COVERAGE_PERCENT" ]; then
         echo "ERROR: No coverage data found for class: $class_name"
