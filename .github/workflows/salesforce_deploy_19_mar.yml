@@ -7,7 +7,7 @@ name: Salesforce Deploy 19 Mar
 
 on:
   push:
-    branches: [ test ]
+    branches: [ test1 ]
     tags: [ '*' ]
   workflow_dispatch:
     inputs:

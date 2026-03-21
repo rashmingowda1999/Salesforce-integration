@@ -4,8 +4,6 @@
     <description>Added new values for Partner record</description>
     <label>Account Status</label>
     <required>false</required>
-    <trackFeedHistory>false</trackFeedHistory>
-    <trackHistory>true</trackHistory>
     <type>Picklist</type>
     <valueSet>
         <restricted>true</restricted>
