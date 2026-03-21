@@ -4,6 +4,12 @@ on:
     branches: [ test ]
     paths:
       - 'force-app/**'
+
+env:
+  DELTA_DIR: changed-sources
+  COVERAGE_THRESHOLD: 85
+  TARGET_ORG_ALIAS: targetOrg
+
 jobs:
   Deploy-to-dev-environment:
       runs-on: ubuntu-latest
@@ -25,13 +31,37 @@ jobs:
                 echo Y | sfdx plugins:install sfdx-git-delta
                 sfdx plugins
           - name: 'Create delta packages'
-            run: | 
+            run: |
                 mkdir changed-sources
                 sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
                 echo "[INFO] Diff generated"
-                
-          - name: 'Deploy to environment with running all local tests'
+
+          - name: 'Authenticate with Salesforce'
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default
-                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+
+          - name: 'Check coverage for changed Apex classes'
+            id: check_changed_coverage
+            run: |
+                # Make the script executable
+                chmod +x scripts/ci/check_changed_apex_coverage.sh
+
+                # Run coverage check for changed classes only (if package.xml exists)
+                if [ -f "${{ env.DELTA_DIR }}/package.xml" ]; then
+                  scripts/ci/check_changed_apex_coverage.sh \
+                    "${{ env.DELTA_DIR }}" \
+                    "${{ env.TARGET_ORG_ALIAS }}" \
+                    "${{ env.COVERAGE_THRESHOLD }}"
+                else
+                  echo "No package.xml found, skipping coverage check"
+                fi
+
+          - name: 'Deploy to environment with running all local tests'
+            run: |
+                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests --target-org ${{ env.TARGET_ORG_ALIAS }}
+
+          - name: 'Cleanup'
+            if: always()
+            run: |
+                rm -f server.key
