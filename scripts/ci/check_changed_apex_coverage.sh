@@ -225,8 +225,9 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Extract coverage data
+# Extract coverage data and test run coverage summary
 COVERAGE_DATA=$(jq -r '.result.coverage' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
+TEST_RUN_COVERAGE=$(jq -r '.result.coverage.summary.testRunCoverage // .result.summary.testRunCoverage // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
 
 if [ -z "$COVERAGE_DATA" ] || [ "$COVERAGE_DATA" = "null" ]; then
     echo "Could not extract coverage data from test results"
@@ -238,8 +239,43 @@ fi
 # Debug: Show coverage data structure
 echo "[DEBUG] Coverage data structure:"
 echo "$COVERAGE_DATA" | jq -r '.' 2>/dev/null || echo "Could not parse coverage data"
-echo "[DEBUG] Available class names in coverage data:"
-echo "$COVERAGE_DATA" | jq -r '.[].name // .[].Name // .[].apexClassOrTriggerName // empty' 2>/dev/null || echo "Could not extract class names"
+echo "[DEBUG] Test run coverage: $TEST_RUN_COVERAGE"
+
+# Check if we have test run coverage summary
+if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+    echo ""
+    echo "📊 TEST RUN COVERAGE VALIDATION:"
+
+    # Remove % sign and convert to integer for comparison
+    COVERAGE_VALUE=$(echo "$TEST_RUN_COVERAGE" | sed 's/%$//')
+    COVERAGE_INT=$(echo "$COVERAGE_VALUE" | cut -d. -f1)
+
+    echo "Overall test run coverage: $TEST_RUN_COVERAGE | Threshold: $COVERAGE_THRESHOLD%"
+
+    if [ "$COVERAGE_INT" -lt "$COVERAGE_THRESHOLD" ]; then
+        echo ""
+        echo "❌ COVERAGE CHECK FAILED!"
+        echo "Test run coverage ($TEST_RUN_COVERAGE) is below the $COVERAGE_THRESHOLD% threshold."
+        echo "Please improve test coverage to meet the minimum requirement."
+
+        # Clean up
+        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
+        exit 1
+    else
+        echo ""
+        echo "✅ COVERAGE CHECK PASSED!"
+        echo "Test run coverage ($TEST_RUN_COVERAGE) meets the $COVERAGE_THRESHOLD% requirement."
+
+        # Clean up
+        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
+        echo "Coverage validation completed successfully."
+        exit 0
+    fi
+fi
+
+# Fallback: Check individual test class coverage (original logic)
+echo ""
+echo "⚠️  No testRunCoverage found in summary. Falling back to individual class coverage check..."
 
 # Check coverage for each changed class
 COVERAGE_FAILURES=""
