@@ -15,75 +15,148 @@ echo "Delta directory: $DELTA_DIR"
 echo "Target org: $TARGET_ORG_ALIAS"
 echo "Coverage threshold: $COVERAGE_THRESHOLD%"
 
-# Find changed Apex classes (excluding test classes)
+# Find ALL changed Apex classes (both regular and test classes)
 CHANGED_APEX_CLASSES=""
+CHANGED_TEST_CLASSES=""
+
 if [ -d "$DELTA_DIR/force-app" ]; then
+    # Find regular (non-test) classes
     CHANGED_APEX_CLASSES=$(find "$DELTA_DIR/force-app" -type f -name "*.cls" ! -name "*Test*.cls" ! -name "Test*.cls" 2>/dev/null || true)
+    # Find test classes
+    CHANGED_TEST_CLASSES=$(find "$DELTA_DIR/force-app" -type f -name "*Test*.cls" -o -name "Test*.cls" 2>/dev/null || true)
 elif [ -d "$DELTA_DIR" ]; then
     # Fallback: look in the root delta dir (for backwards compatibility)
     CHANGED_APEX_CLASSES=$(find "$DELTA_DIR" -type f -name "*.cls" ! -name "*Test*.cls" ! -name "Test*.cls" 2>/dev/null || true)
+    CHANGED_TEST_CLASSES=$(find "$DELTA_DIR" -type f -name "*Test*.cls" -o -name "Test*.cls" 2>/dev/null || true)
 fi
 
-if [ -z "$CHANGED_APEX_CLASSES" ]; then
-    echo "No non-test Apex classes changed. Skipping coverage check."
+if [ -z "$CHANGED_APEX_CLASSES" ] && [ -z "$CHANGED_TEST_CLASSES" ]; then
+    echo "No Apex classes (regular or test) changed. Skipping coverage check."
     exit 0
 fi
 
-echo "Changed Apex classes found:"
-echo "$CHANGED_APEX_CLASSES"
-
+echo "Processing changed Apex classes..."
+if [ -n "$CHANGED_APEX_CLASSES" ]; then
+    echo "Changed regular classes:"
+    echo "$CHANGED_APEX_CLASSES"
+fi
+if [ -n "$CHANGED_TEST_CLASSES" ]; then
+    echo "Changed test classes:"
+    echo "$CHANGED_TEST_CLASSES"
+fi
 # Extract class names and find corresponding test classes
 TEST_CLASSES_TO_RUN=""
 CLASSES_TO_CHECK=""
 
-for class_file in $CHANGED_APEX_CLASSES; do
-    # Extract class name from file path (remove .cls extension)
-    class_name=$(basename "$class_file" .cls)
+# Process regular (non-test) classes
+if [ -n "$CHANGED_APEX_CLASSES" ]; then
+    echo "Processing regular classes to find their test classes..."
+    for class_file in $CHANGED_APEX_CLASSES; do
+        # Extract class name from file path (remove .cls extension)
+        class_name=$(basename "$class_file" .cls)
 
-    # Add to classes we need to check coverage for
-    if [ -z "$CLASSES_TO_CHECK" ]; then
-        CLASSES_TO_CHECK="$class_name"
-    else
-        CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$class_name"
-    fi
+        # Add to classes we need to check coverage for
+        if [ -z "$CLASSES_TO_CHECK" ]; then
+            CLASSES_TO_CHECK="$class_name"
+        else
+            CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$class_name"
+        fi
 
-    # Find corresponding test class(es) - check common naming patterns
-    test_class_patterns=(
-        "Test$class_name"
-        "${class_name}Test"
-        "${class_name}Tests"
-        "Test${class_name}s"
-    )
+        # Find corresponding test class(es) - check common naming patterns
+        test_class_patterns=(
+            "Test$class_name"
+            "${class_name}Test"
+            "${class_name}Tests"
+            "Test${class_name}s"
+        )
 
-    found_test=false
-    for pattern in "${test_class_patterns[@]}"; do
-        # Check if test class exists in force-app
-        test_file_path="force-app/main/default/classes/${pattern}.cls"
-        if [ -f "$test_file_path" ]; then
-            echo "Found test class for $class_name: $pattern"
-            if [ -z "$TEST_CLASSES_TO_RUN" ]; then
-                TEST_CLASSES_TO_RUN="$pattern"
-            else
-                TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+        found_test=false
+        for pattern in "${test_class_patterns[@]}"; do
+            # Check if test class exists in force-app
+            test_file_path="force-app/main/default/classes/${pattern}.cls"
+            if [ -f "$test_file_path" ]; then
+                echo "Found test class for $class_name: $pattern"
+                if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                    TEST_CLASSES_TO_RUN="$pattern"
+                else
+                    TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                fi
+                found_test=true
+                break
             fi
-            found_test=true
-            break
+        done
+
+        if [ "$found_test" = false ]; then
+            echo "WARNING: No test class found for $class_name using standard naming conventions"
+            echo "  Checked patterns: ${test_class_patterns[*]}"
         fi
     done
+fi
 
-    if [ "$found_test" = false ]; then
-        echo "WARNING: No test class found for $class_name using standard naming conventions"
-        echo "  Checked patterns: ${test_class_patterns[*]}"
-    fi
-done
+# Process test classes
+if [ -n "$CHANGED_TEST_CLASSES" ]; then
+    echo "Processing changed test classes..."
+    for test_file in $CHANGED_TEST_CLASSES; do
+        # Extract test class name from file path (remove .cls extension)
+        test_class_name=$(basename "$test_file" .cls)
+
+        # Add test class to run list
+        if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+            TEST_CLASSES_TO_RUN="$test_class_name"
+        else
+            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test_class_name"
+        fi
+
+        # Determine what main class this test is for
+        main_class_name=""
+        if [[ "$test_class_name" =~ ^Test(.+)$ ]]; then
+            # Pattern: TestClassName -> ClassName
+            main_class_name="${BASH_REMATCH[1]}"
+        elif [[ "$test_class_name" =~ ^(.+)Test(s?)$ ]]; then
+            # Pattern: ClassNameTest(s) -> ClassName
+            main_class_name="${BASH_REMATCH[1]}"
+        fi
+
+        if [ -n "$main_class_name" ]; then
+            # Check if the main class actually exists
+            main_class_path="force-app/main/default/classes/${main_class_name}.cls"
+            if [ -f "$main_class_path" ]; then
+                echo "Test class $test_class_name tests main class: $main_class_name"
+
+                # Add to coverage check list if not already there
+                if [[ ",$CLASSES_TO_CHECK," != *",$main_class_name,"* ]]; then
+                    if [ -z "$CLASSES_TO_CHECK" ]; then
+                        CLASSES_TO_CHECK="$main_class_name"
+                    else
+                        CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$main_class_name"
+                    fi
+                fi
+            else
+                echo "WARNING: Test class $test_class_name doesn't seem to have a corresponding main class ($main_class_name not found)"
+            fi
+        else
+            echo "WARNING: Could not determine main class for test class $test_class_name"
+        fi
+    done
+fi
 
 if [ -z "$TEST_CLASSES_TO_RUN" ]; then
-    echo "No test classes found for changed Apex classes. This is likely an error."
-    echo "Changed classes: $CLASSES_TO_CHECK"
+    echo "No test classes found to run. This could happen if:"
+    echo "- Changed regular classes have no corresponding test classes"
+    echo "- Changed test classes don't follow naming conventions"
+    echo "Changed regular classes: $CHANGED_APEX_CLASSES"
+    echo "Changed test classes: $CHANGED_TEST_CLASSES"
+    exit 1
+fi
+
+if [ -z "$CLASSES_TO_CHECK" ]; then
+    echo "No classes found to check coverage for. This is likely an error."
+    echo "Test classes to run: $TEST_CLASSES_TO_RUN"
     exit 1
 fi
 
 echo "Test classes to run: $TEST_CLASSES_TO_RUN"
+echo "Classes to check coverage for: $CLASSES_TO_CHECK"
 
 # Run the specific test classes and get coverage
 echo "Running tests and collecting coverage..."
