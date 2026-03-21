@@ -26,23 +26,25 @@
 - Added debugging output to show JSON structure for troubleshooting
 - Improved error messages when coverage data cannot be found
 
-### 4. Test Class Coverage Validation ✅ NEW FEATURE
-**Enhancement**: Added validation for test class coverage in addition to main class coverage
+### 4. Test Class Coverage Validation ✅ FOCUSED VALIDATION
+**Enhancement**: Simplified to validate only test class coverage (not main class coverage)
 
 **What it does**:
-- When `AccountDescriptionUpdater.cls` changes → validates coverage for BOTH `AccountDescriptionUpdater` AND `TestAccountDescriptionUpdater`
-- Ensures both business logic and test code maintain quality coverage standards
-- Provides clear labeling in output to distinguish "Main class" vs "Test class" results
-- Comprehensive coverage summary shows all classes being validated
+- When `AccountDescriptionUpdater.cls` changes → validates coverage for ONLY `TestAccountDescriptionUpdater` (≥85%)
+- When `TestAccountDescriptionUpdater.cls` changes → validates coverage for ONLY `TestAccountDescriptionUpdater` (≥85%)
+- Focuses on ensuring test quality rather than main class business logic coverage
+- Provides clear output showing which test classes are being validated
 
 **Example Output**:
 ```
 📊 COVERAGE VALIDATION SUMMARY:
 Test classes to execute: TestAccountDescriptionUpdater
-Classes requiring 85% coverage: AccountDescriptionUpdater,TestAccountDescriptionUpdater
+Test classes requiring 85% coverage: TestAccountDescriptionUpdater
 
-Main class: AccountDescriptionUpdater | Coverage: 95% | Threshold: 85% ✅
 Test class: TestAccountDescriptionUpdater | Coverage: 88% | Threshold: 85% ✅
+
+✅ COVERAGE CHECK PASSED!
+All test classes meet the 85% coverage requirement.
 ```
 
 ## Current Workflow
@@ -52,7 +54,7 @@ Test class: TestAccountDescriptionUpdater | Coverage: 88% | Threshold: 85% ✅
 3. **Finds changed Apex classes** in `changed-sources/force-app/main/default/classes/`
 4. **Identifies test classes** using naming conventions (`TestClassName`, `ClassNameTest`, etc.)
 5. **Runs targeted tests** with coverage using SF CLI
-6. **Validates coverage** meets 85% threshold for BOTH changed classes AND their test classes
+6. **Validates coverage** meets 85% threshold for test classes only
 7. **Reports results** with ✅ PASS or ❌ FAIL status
 
 ## Test Class Auto-Discovery
@@ -75,3 +77,4 @@ The script automatically finds test classes using these patterns:
 3. **9f52d25** - Enhance coverage data parsing with comprehensive debugging
 4. **4c923ab** - Handle both regular class and test class changes in coverage validation
 5. **b073ebc** - Add test class coverage validation to deployment process
+6. **c44b6db** - Simplify coverage validation to test classes only
