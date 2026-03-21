@@ -27,25 +27,39 @@
 - Improved error messages when coverage data cannot be found
 
 ### 4. Test Class Coverage Validation ✅ FOCUSED VALIDATION
-**Enhancement**: Simplified to validate only test class coverage (not main class coverage)
+**Enhancement**: Uses testRunCoverage from summary for validation instead of individual class coverage
 
 **What it does**:
-- When `AccountDescriptionUpdater.cls` changes → validates coverage for ONLY `TestAccountDescriptionUpdater` (≥85%)
-- When `TestAccountDescriptionUpdater.cls` changes → validates coverage for ONLY `TestAccountDescriptionUpdater` (≥85%)
-- Focuses on ensuring test quality rather than main class business logic coverage
-- Provides clear output showing which test classes are being validated
+- When any Apex class changes → runs corresponding test classes → validates **testRunCoverage ≥ 85%**
+- Uses the `testRunCoverage` percentage from the test result summary (e.g., `"testRunCoverage": "100%"`)
+- Much simpler and more accurate than trying to find individual test class coverage data
+
+**Why this approach**:
+- Test classes don't appear in the coverage array because they're the ones doing the testing
+- The coverage array only contains coverage for main classes being tested
+- `testRunCoverage` gives the overall coverage percentage for the entire test run
 
 **Example Output**:
 ```
-📊 COVERAGE VALIDATION SUMMARY:
-Test classes to execute: TestAccountDescriptionUpdater
-Test classes requiring 85% coverage: TestAccountDescriptionUpdater
-
-Test class: TestAccountDescriptionUpdater | Coverage: 88% | Threshold: 85% ✅
+📊 TEST RUN COVERAGE VALIDATION:
+Overall test run coverage: 100% | Threshold: 85%
 
 ✅ COVERAGE CHECK PASSED!
-All test classes meet the 85% coverage requirement.
+Test run coverage (100%) meets the 85% requirement.
 ```
+
+### 5. TestRunCoverage Validation Fix ✅ CRITICAL FIX
+**Problem**: Script was looking for individual test class coverage in the coverage array, but test classes don't appear there
+
+**Root Cause**:
+- Test classes don't appear in the coverage data because they're the ones doing the testing
+- The coverage array only contains coverage for main classes being tested (like `AccountDescriptionUpdater`)
+- Script was trying to find `TestAccountDescriptionUpdater` in coverage data, which doesn't exist
+
+**Solution**:
+- Use `testRunCoverage` from the summary section instead (e.g., `"testRunCoverage": "100%"`)
+- This represents the overall coverage percentage for the entire test run
+- Much more reliable and accurate approach
 
 ## Current Workflow
 
@@ -54,7 +68,7 @@ All test classes meet the 85% coverage requirement.
 3. **Finds changed Apex classes** in `changed-sources/force-app/main/default/classes/`
 4. **Identifies test classes** using naming conventions (`TestClassName`, `ClassNameTest`, etc.)
 5. **Runs targeted tests** with coverage using SF CLI
-6. **Validates coverage** meets 85% threshold for test classes only
+6. **Validates testRunCoverage** meets 85% threshold using summary data
 7. **Reports results** with ✅ PASS or ❌ FAIL status
 
 ## Test Class Auto-Discovery
@@ -78,3 +92,4 @@ The script automatically finds test classes using these patterns:
 4. **4c923ab** - Handle both regular class and test class changes in coverage validation
 5. **b073ebc** - Add test class coverage validation to deployment process
 6. **c44b6db** - Simplify coverage validation to test classes only
+7. **8645dbe** - Fix coverage validation to use testRunCoverage from summary
