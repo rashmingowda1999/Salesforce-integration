@@ -158,6 +158,27 @@ fi
 echo "Test classes to run: $TEST_CLASSES_TO_RUN"
 echo "Classes to check coverage for: $CLASSES_TO_CHECK"
 
+# Also add test classes to coverage check list (test classes should have good coverage too)
+echo "Adding test classes to coverage validation..."
+IFS=',' read -ra TEST_ARRAY <<< "$TEST_CLASSES_TO_RUN"
+for test_class in "${TEST_ARRAY[@]}"; do
+    if [[ ",$CLASSES_TO_CHECK," != *",$test_class,"* ]]; then
+        if [ -z "$CLASSES_TO_CHECK" ]; then
+            CLASSES_TO_CHECK="$test_class"
+        else
+            CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$test_class"
+        fi
+        echo "Added test class to coverage check: $test_class"
+    fi
+done
+
+echo "Final classes to check coverage for: $CLASSES_TO_CHECK"
+echo ""
+echo "📊 COVERAGE VALIDATION SUMMARY:"
+echo "Test classes to execute: $TEST_CLASSES_TO_RUN"
+echo "Classes requiring $COVERAGE_THRESHOLD% coverage: $CLASSES_TO_CHECK"
+echo ""
+
 # Run the specific test classes and get coverage
 echo "Running tests and collecting coverage..."
 TEST_RESULT_FILE="test-result-$(date +%s).json"
@@ -241,6 +262,12 @@ IFS=',' read -ra CLASS_ARRAY <<< "$CLASSES_TO_CHECK"
 for class_name in "${CLASS_ARRAY[@]}"; do
     echo "[DEBUG] Looking for coverage data for class: $class_name"
 
+    # Determine if this is a test class for better labeling
+    class_type="Main class"
+    if [[ "$class_name" =~ Test.*$ ]] || [[ "$class_name" =~ .*Test.*$ ]]; then
+        class_type="Test class"
+    fi
+
     # Extract coverage percentage for this specific class - try multiple field combinations
     COVERAGE_PERCENT=""
 
@@ -264,11 +291,11 @@ for class_name in "${CLASS_ARRAY[@]}"; do
     # Convert to integer for comparison (remove decimal if present)
     COVERAGE_INT=$(echo "$COVERAGE_PERCENT" | cut -d. -f1)
 
-    echo "Class: $class_name | Coverage: $COVERAGE_PERCENT% | Threshold: $COVERAGE_THRESHOLD%"
+    echo "$class_type: $class_name | Coverage: $COVERAGE_PERCENT% | Threshold: $COVERAGE_THRESHOLD%"
 
     if [ "$COVERAGE_INT" -lt "$COVERAGE_THRESHOLD" ]; then
         echo "FAIL: $class_name coverage ($COVERAGE_PERCENT%) is below threshold ($COVERAGE_THRESHOLD%)"
-        COVERAGE_FAILURES="$COVERAGE_FAILURES\n- $class_name: $COVERAGE_PERCENT% (below $COVERAGE_THRESHOLD%)"
+        COVERAGE_FAILURES="$COVERAGE_FAILURES\n- $class_name ($class_type): $COVERAGE_PERCENT% (below $COVERAGE_THRESHOLD%)"
     else
         echo "PASS: $class_name coverage ($COVERAGE_PERCENT%) meets threshold"
     fi
@@ -289,7 +316,7 @@ if [ -n "$COVERAGE_FAILURES" ]; then
 else
     echo ""
     echo "✅ COVERAGE CHECK PASSED!"
-    echo "All changed Apex classes meet the $COVERAGE_THRESHOLD% coverage requirement."
+    echo "All classes (both main classes and test classes) meet the $COVERAGE_THRESHOLD% coverage requirement."
 fi
 
 # Clean up
