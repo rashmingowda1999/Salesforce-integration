@@ -1,7 +1,7 @@
 public class AccountDescriptionUpdater {
 
     public static void updateAccountDescription(Id accountId, String newDescription) {
-        // Retrieve the Account record11
+        // Retrieve the Account record111
         Account acc = [SELECT Id, Description FROM Account WHERE Id = :accountId];
 
         // Update the Description field
