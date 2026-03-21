@@ -1,6 +1,6 @@
 # NOTE: If running in GitHub Actions, ensure this script is executable:
-#   - name: Make scripts executable
-#     run: chmod +x ./scripts/*.sh
+  - name: Make scripts executable
+        run: chmod +x ./scripts/*.sh
 #!/bin/bash
 # scripts/auth.sh
 # Authenticate to Salesforce using JWT or SFDX Auth URL
