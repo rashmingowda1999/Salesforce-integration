@@ -51,12 +51,13 @@ CLASSES_TO_CHECK=""
 # Process regular (non-test) classes
 if [ -n "$CHANGED_APEX_CLASSES" ]; then
     echo "Processing regular classes to find their test classes..."
+    echo ""
     for class_file in $CHANGED_APEX_CLASSES; do
         # Extract class name from file path (remove .cls extension)
         class_name=$(basename "$class_file" .cls)
 
-        # NOTE: We only check coverage for test classes, not the main classes
-        echo "Changed regular class: $class_name"
+        echo "🔍 Changed Apex class: $class_name"
+        echo "   Searching for corresponding test class..."
 
         # Find corresponding test class(es) - check common naming patterns
         test_class_patterns=(
@@ -71,7 +72,8 @@ if [ -n "$CHANGED_APEX_CLASSES" ]; then
             # Check if test class exists in force-app
             test_file_path="force-app/main/default/classes/${pattern}.cls"
             if [ -f "$test_file_path" ]; then
-                echo "Found test class for $class_name: $pattern"
+                echo "   ✅ Found test class: $pattern"
+                echo "   📋 Deployment will run: $pattern → validates $class_name"
                 if [ -z "$TEST_CLASSES_TO_RUN" ]; then
                     TEST_CLASSES_TO_RUN="$pattern"
                 else
@@ -89,18 +91,22 @@ if [ -n "$CHANGED_APEX_CLASSES" ]; then
         done
 
         if [ "$found_test" = false ]; then
-            echo "WARNING: No test class found for $class_name using standard naming conventions"
-            echo "  Checked patterns: ${test_class_patterns[*]}"
+            echo "   ❌ No test class found using standard naming conventions"
+            echo "   🔍 Checked patterns: ${test_class_patterns[*]}"
         fi
+        echo ""
     done
 fi
 
 # Process test classes
 if [ -n "$CHANGED_TEST_CLASSES" ]; then
     echo "Processing changed test classes..."
+    echo ""
     for test_file in $CHANGED_TEST_CLASSES; do
         # Extract test class name from file path (remove .cls extension)
         test_class_name=$(basename "$test_file" .cls)
+
+        echo "🧪 Changed test class: $test_class_name"
 
         # Add test class to run list
         if [ -z "$TEST_CLASSES_TO_RUN" ]; then
@@ -132,13 +138,17 @@ if [ -n "$CHANGED_TEST_CLASSES" ]; then
             # Check if the main class actually exists
             main_class_path="force-app/main/default/classes/${main_class_name}.cls"
             if [ -f "$main_class_path" ]; then
-                echo "Test class $test_class_name tests main class: $main_class_name (coverage check for test class only)"
+                echo "   🎯 Tests main class: $main_class_name"
+                echo "   📋 Deployment will run: $test_class_name → validates test coverage"
             else
-                echo "INFO: Test class $test_class_name doesn't seem to have a corresponding main class ($main_class_name not found)"
+                echo "   ℹ️  No corresponding main class found ($main_class_name)"
+                echo "   📋 Deployment will run: $test_class_name → validates test coverage"
             fi
         else
-            echo "INFO: Could not determine main class for test class $test_class_name"
+            echo "   ℹ️  Could not determine corresponding main class"
+            echo "   📋 Deployment will run: $test_class_name → validates test coverage"
         fi
+        echo ""
     done
 fi
 
@@ -160,9 +170,17 @@ fi
 echo "Test classes to run: $TEST_CLASSES_TO_RUN"
 echo "Classes to check coverage for: $CLASSES_TO_CHECK"
 echo ""
-echo "📊 COVERAGE VALIDATION SUMMARY:"
-echo "Test classes to execute: $TEST_CLASSES_TO_RUN"
-echo "Test classes requiring $COVERAGE_THRESHOLD% coverage: $CLASSES_TO_CHECK"
+echo "=========================================="
+echo "📊 DEPLOYMENT COVERAGE VALIDATION SUMMARY"
+echo "=========================================="
+echo ""
+IFS=',' read -ra TEST_ARRAY <<< "$TEST_CLASSES_TO_RUN"
+for test_class in "${TEST_ARRAY[@]}"; do
+    echo "🧪 Test class to execute: $test_class"
+done
+echo ""
+echo "📈 Coverage validation: testRunCoverage ≥ $COVERAGE_THRESHOLD%"
+echo "=========================================="
 echo ""
 
 # Run the specific test classes and get coverage
@@ -244,27 +262,35 @@ echo "[DEBUG] Test run coverage: $TEST_RUN_COVERAGE"
 # Check if we have test run coverage summary
 if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
     echo ""
-    echo "📊 TEST RUN COVERAGE VALIDATION:"
+    echo "=========================================="
+    echo "📊 TEST RUN COVERAGE VALIDATION RESULTS"
+    echo "=========================================="
 
     # Remove % sign and convert to integer for comparison
     COVERAGE_VALUE=$(echo "$TEST_RUN_COVERAGE" | sed 's/%$//')
     COVERAGE_INT=$(echo "$COVERAGE_VALUE" | cut -d. -f1)
 
-    echo "Overall test run coverage: $TEST_RUN_COVERAGE | Threshold: $COVERAGE_THRESHOLD%"
+    echo "🎯 Overall test run coverage: $TEST_RUN_COVERAGE"
+    echo "📏 Required threshold: $COVERAGE_THRESHOLD%"
+    echo ""
 
     if [ "$COVERAGE_INT" -lt "$COVERAGE_THRESHOLD" ]; then
-        echo ""
         echo "❌ COVERAGE CHECK FAILED!"
-        echo "Test run coverage ($TEST_RUN_COVERAGE) is below the $COVERAGE_THRESHOLD% threshold."
-        echo "Please improve test coverage to meet the minimum requirement."
+        echo "   Test run coverage ($TEST_RUN_COVERAGE) is below the $COVERAGE_THRESHOLD% threshold."
+        echo ""
+        echo "🔧 Next steps:"
+        echo "   • Improve test coverage in your test classes"
+        echo "   • Ensure all code paths are tested"
+        echo "   • Add missing test cases for edge scenarios"
 
         # Clean up
         rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
         exit 1
     else
-        echo ""
         echo "✅ COVERAGE CHECK PASSED!"
-        echo "Test run coverage ($TEST_RUN_COVERAGE) meets the $COVERAGE_THRESHOLD% requirement."
+        echo "   Test run coverage ($TEST_RUN_COVERAGE) meets the $COVERAGE_THRESHOLD% requirement."
+        echo ""
+        echo "🚀 Deployment can proceed with confidence!"
 
         # Clean up
         rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
