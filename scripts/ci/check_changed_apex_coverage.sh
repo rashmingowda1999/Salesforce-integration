@@ -89,11 +89,13 @@ echo "Test classes to run: $TEST_CLASSES_TO_RUN"
 echo "Running tests and collecting coverage..."
 TEST_RESULT_FILE="test-result-$(date +%s).json"
 
+# Try to run tests synchronously first
 sf apex run test \
     --target-org "$TARGET_ORG_ALIAS" \
     --class-names "$TEST_CLASSES_TO_RUN" \
     --code-coverage \
     --result-format json \
+    --wait 10 \
     --json > "$TEST_RESULT_FILE"
 
 echo "Test execution completed. Results saved to $TEST_RESULT_FILE"
@@ -105,8 +107,37 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Check if we got a test run ID instead of full results (async execution)
+TEST_RUN_ID=$(jq -r '.result.testRunId // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
+COVERAGE_DATA=$(jq -r '.result.coverage // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
+
+if [ -n "$TEST_RUN_ID" ] && [ -z "$COVERAGE_DATA" ]; then
+    echo "Test ran asynchronously with ID: $TEST_RUN_ID"
+    echo "Fetching test results..."
+
+    # Get the full test results using the test run ID
+    FINAL_RESULT_FILE="final-test-result-$(date +%s).json"
+    sf apex get test --test-run-id "$TEST_RUN_ID" --target-org "$TARGET_ORG_ALIAS" --code-coverage --result-format json --json > "$FINAL_RESULT_FILE"
+
+    if [ $? -ne 0 ]; then
+        echo "Failed to retrieve test results!"
+        cat "$FINAL_RESULT_FILE"
+        exit 1
+    fi
+
+    # Use the final results file for coverage analysis
+    TEST_RESULT_FILE="$FINAL_RESULT_FILE"
+    echo "Final test results retrieved and saved to $TEST_RESULT_FILE"
+fi
+
 # Parse test results and extract coverage for each changed class
 echo "Analyzing coverage results..."
+
+# Debug: Show the structure of the test result
+echo "[DEBUG] Test result JSON structure:"
+jq -r 'keys[]' "$TEST_RESULT_FILE" 2>/dev/null || echo "Could not parse JSON keys"
+echo "[DEBUG] Result keys:"
+jq -r '.result | keys[]' "$TEST_RESULT_FILE" 2>/dev/null || echo "Could not parse result keys"
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
@@ -115,9 +146,9 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Extract coverage data
-COVERAGE_DATA=$(jq -r '.result.coverage' "$TEST_RESULT_FILE" 2>/dev/null || echo "null")
+COVERAGE_DATA=$(jq -r '.result.coverage // .result.tests.coverage // .result.codecoverage // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
 
-if [ "$COVERAGE_DATA" = "null" ] || [ -z "$COVERAGE_DATA" ]; then
+if [ -z "$COVERAGE_DATA" ] || [ "$COVERAGE_DATA" = "null" ]; then
     echo "Could not extract coverage data from test results"
     echo "Test result content:"
     cat "$TEST_RESULT_FILE"
@@ -167,7 +198,7 @@ if [ -n "$COVERAGE_FAILURES" ]; then
     echo "Please add or improve test coverage for these classes."
 
     # Clean up
-    rm -f "$TEST_RESULT_FILE"
+    rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
     exit 1
 else
     echo ""
@@ -176,5 +207,5 @@ else
 fi
 
 # Clean up
-rm -f "$TEST_RESULT_FILE"
+rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
 echo "Coverage validation completed successfully."
