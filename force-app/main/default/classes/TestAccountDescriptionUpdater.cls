@@ -2,7 +2,8 @@
 private class TestAccountDescriptionUpdater {
 
     /**
-     * Common test data created once for all methods in this class.
+     * Test data setup for AccountDescriptionUpdater test class.
+     * Creates a test account with initial description.
      */
     @testSetup
     static void setupData() {
