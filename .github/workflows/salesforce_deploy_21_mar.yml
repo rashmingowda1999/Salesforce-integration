@@ -33,8 +33,26 @@ jobs:
           - name: 'Create delta packages'
             run: |
                 mkdir changed-sources
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output changed-sources/ --generate-delta --source force-app/
+
+                # Show git changes for debugging
+                echo "[DEBUG] Git diff between HEAD~1 and HEAD:"
+                git diff --name-only HEAD~1 HEAD
+
+                # Run delta generation
+                sf sgd source delta --to "HEAD" --from "HEAD~1" --output-dir changed-sources/ --generate-delta --source-dir force-app/
                 echo "[INFO] Diff generated"
+
+                # Show what was created
+                echo "[DEBUG] Contents of changed-sources directory:"
+                ls -la changed-sources/
+
+                # Check if package.xml exists and show its content
+                if [ -f "changed-sources/package/package.xml" ]; then
+                  echo "[DEBUG] package.xml found, content:"
+                  cat changed-sources/package/package.xml
+                else
+                  echo "[DEBUG] No package.xml was created"
+                fi
 
           - name: 'Authenticate with Salesforce'
             run: |
@@ -48,7 +66,7 @@ jobs:
                 chmod +x scripts/ci/check_changed_apex_coverage.sh
 
                 # Run coverage check for changed classes only (if package.xml exists)
-                if [ -f "${{ env.DELTA_DIR }}/package.xml" ]; then
+                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   scripts/ci/check_changed_apex_coverage.sh \
                     "${{ env.DELTA_DIR }}" \
                     "${{ env.TARGET_ORG_ALIAS }}" \

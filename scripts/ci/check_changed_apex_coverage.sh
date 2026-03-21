@@ -17,7 +17,10 @@ echo "Coverage threshold: $COVERAGE_THRESHOLD%"
 
 # Find changed Apex classes (excluding test classes)
 CHANGED_APEX_CLASSES=""
-if [ -d "$DELTA_DIR" ]; then
+if [ -d "$DELTA_DIR/force-app" ]; then
+    CHANGED_APEX_CLASSES=$(find "$DELTA_DIR/force-app" -type f -name "*.cls" ! -name "*Test*.cls" ! -name "Test*.cls" 2>/dev/null || true)
+elif [ -d "$DELTA_DIR" ]; then
+    # Fallback: look in the root delta dir (for backwards compatibility)
     CHANGED_APEX_CLASSES=$(find "$DELTA_DIR" -type f -name "*.cls" ! -name "*Test*.cls" ! -name "Test*.cls" 2>/dev/null || true)
 fi
 
