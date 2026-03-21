@@ -55,12 +55,8 @@ if [ -n "$CHANGED_APEX_CLASSES" ]; then
         # Extract class name from file path (remove .cls extension)
         class_name=$(basename "$class_file" .cls)
 
-        # Add to classes we need to check coverage for
-        if [ -z "$CLASSES_TO_CHECK" ]; then
-            CLASSES_TO_CHECK="$class_name"
-        else
-            CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$class_name"
-        fi
+        # NOTE: We only check coverage for test classes, not the main classes
+        echo "Changed regular class: $class_name"
 
         # Find corresponding test class(es) - check common naming patterns
         test_class_patterns=(
@@ -80,6 +76,12 @@ if [ -n "$CHANGED_APEX_CLASSES" ]; then
                     TEST_CLASSES_TO_RUN="$pattern"
                 else
                     TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                fi
+                # Add test class to coverage check (not the main class)
+                if [ -z "$CLASSES_TO_CHECK" ]; then
+                    CLASSES_TO_CHECK="$pattern"
+                else
+                    CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$pattern"
                 fi
                 found_test=true
                 break
@@ -107,7 +109,16 @@ if [ -n "$CHANGED_TEST_CLASSES" ]; then
             TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test_class_name"
         fi
 
-        # Determine what main class this test is for
+        # Add test class to coverage check list (we only check test class coverage)
+        if [[ ",$CLASSES_TO_CHECK," != *",$test_class_name,"* ]]; then
+            if [ -z "$CLASSES_TO_CHECK" ]; then
+                CLASSES_TO_CHECK="$test_class_name"
+            else
+                CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$test_class_name"
+            fi
+        fi
+
+        # Determine what main class this test is for (for informational purposes only)
         main_class_name=""
         if [[ "$test_class_name" =~ ^Test(.+)$ ]]; then
             # Pattern: TestClassName -> ClassName
@@ -121,21 +132,12 @@ if [ -n "$CHANGED_TEST_CLASSES" ]; then
             # Check if the main class actually exists
             main_class_path="force-app/main/default/classes/${main_class_name}.cls"
             if [ -f "$main_class_path" ]; then
-                echo "Test class $test_class_name tests main class: $main_class_name"
-
-                # Add to coverage check list if not already there
-                if [[ ",$CLASSES_TO_CHECK," != *",$main_class_name,"* ]]; then
-                    if [ -z "$CLASSES_TO_CHECK" ]; then
-                        CLASSES_TO_CHECK="$main_class_name"
-                    else
-                        CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$main_class_name"
-                    fi
-                fi
+                echo "Test class $test_class_name tests main class: $main_class_name (coverage check for test class only)"
             else
-                echo "WARNING: Test class $test_class_name doesn't seem to have a corresponding main class ($main_class_name not found)"
+                echo "INFO: Test class $test_class_name doesn't seem to have a corresponding main class ($main_class_name not found)"
             fi
         else
-            echo "WARNING: Could not determine main class for test class $test_class_name"
+            echo "INFO: Could not determine main class for test class $test_class_name"
         fi
     done
 fi
@@ -157,26 +159,10 @@ fi
 
 echo "Test classes to run: $TEST_CLASSES_TO_RUN"
 echo "Classes to check coverage for: $CLASSES_TO_CHECK"
-
-# Also add test classes to coverage check list (test classes should have good coverage too)
-echo "Adding test classes to coverage validation..."
-IFS=',' read -ra TEST_ARRAY <<< "$TEST_CLASSES_TO_RUN"
-for test_class in "${TEST_ARRAY[@]}"; do
-    if [[ ",$CLASSES_TO_CHECK," != *",$test_class,"* ]]; then
-        if [ -z "$CLASSES_TO_CHECK" ]; then
-            CLASSES_TO_CHECK="$test_class"
-        else
-            CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$test_class"
-        fi
-        echo "Added test class to coverage check: $test_class"
-    fi
-done
-
-echo "Final classes to check coverage for: $CLASSES_TO_CHECK"
 echo ""
 echo "📊 COVERAGE VALIDATION SUMMARY:"
 echo "Test classes to execute: $TEST_CLASSES_TO_RUN"
-echo "Classes requiring $COVERAGE_THRESHOLD% coverage: $CLASSES_TO_CHECK"
+echo "Test classes requiring $COVERAGE_THRESHOLD% coverage: $CLASSES_TO_CHECK"
 echo ""
 
 # Run the specific test classes and get coverage
@@ -263,9 +249,11 @@ for class_name in "${CLASS_ARRAY[@]}"; do
     echo "[DEBUG] Looking for coverage data for class: $class_name"
 
     # Determine if this is a test class for better labeling
-    class_type="Main class"
-    if [[ "$class_name" =~ Test.*$ ]] || [[ "$class_name" =~ .*Test.*$ ]]; then
-        class_type="Test class"
+    class_type="Test class"
+    if [[ ! "$class_name" =~ Test.*$ ]] && [[ ! "$class_name" =~ .*Test.*$ ]]; then
+        class_type="Class"
+        # This shouldn't happen since we only check test classes now
+        echo "WARNING: Non-test class $class_name in coverage check list - this may be an error"
     fi
 
     # Extract coverage percentage for this specific class - try multiple field combinations
@@ -305,10 +293,10 @@ done
 if [ -n "$COVERAGE_FAILURES" ]; then
     echo ""
     echo "❌ COVERAGE CHECK FAILED!"
-    echo "The following classes do not meet the $COVERAGE_THRESHOLD% coverage requirement:"
+    echo "The following test classes do not meet the $COVERAGE_THRESHOLD% coverage requirement:"
     echo -e "$COVERAGE_FAILURES"
     echo ""
-    echo "Please add or improve test coverage for these classes."
+    echo "Please add or improve test coverage for these test classes."
 
     # Clean up
     rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
@@ -316,7 +304,7 @@ if [ -n "$COVERAGE_FAILURES" ]; then
 else
     echo ""
     echo "✅ COVERAGE CHECK PASSED!"
-    echo "All classes (both main classes and test classes) meet the $COVERAGE_THRESHOLD% coverage requirement."
+    echo "All test classes meet the $COVERAGE_THRESHOLD% coverage requirement."
 fi
 
 # Clean up
