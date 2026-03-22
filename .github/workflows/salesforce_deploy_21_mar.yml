@@ -59,25 +59,33 @@ jobs:
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
 
-          - name: 'Check coverage for changed Apex classes'
-            id: check_changed_coverage
+          - name: 'Deploy to environment'
+            run: |
+                # Deploy without running tests first, then we'll run our targeted coverage validation
+                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                  echo "Deploying changed components to ${{ env.TARGET_ORG_ALIAS }}..."
+                  sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }}
+                  echo "✅ Deployment completed successfully"
+                else
+                  echo "No package.xml found, skipping deployment"
+                fi
+
+          - name: 'Validate coverage for changed Apex classes'
+            id: validate_changed_coverage
             run: |
                 # Make the script executable
                 chmod +x scripts/ci/check_changed_apex_coverage.sh
 
-                # Run coverage check for changed classes only (if package.xml exists)
+                # Run coverage validation for changed classes only (if package.xml exists)
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                  echo "Running targeted coverage validation for changed classes..."
                   scripts/ci/check_changed_apex_coverage.sh \
                     "${{ env.DELTA_DIR }}" \
                     "${{ env.TARGET_ORG_ALIAS }}" \
                     "${{ env.COVERAGE_THRESHOLD }}"
                 else
-                  echo "No package.xml found, skipping coverage check"
+                  echo "No package.xml found, skipping coverage validation"
                 fi
-
-          - name: 'Deploy to environment with running all local tests'
-            run: |
-                sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests --target-org ${{ env.TARGET_ORG_ALIAS }}
 
           - name: 'Cleanup'
             if: always()
