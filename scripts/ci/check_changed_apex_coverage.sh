@@ -73,17 +73,26 @@ if [ -n "$CHANGED_APEX_CLASSES" ]; then
             test_file_path="force-app/main/default/classes/${pattern}.cls"
             if [ -f "$test_file_path" ]; then
                 echo "   ✅ Found test class: $pattern"
-                echo "   📋 Deployment will run: $pattern → validates $class_name"
+                if [[ ",$TEST_CLASSES_TO_RUN," == *",$pattern,"* ]]; then
+                    echo "   ⚠️  Test class $pattern already in execution list - skipping duplicate"
+                else
+                    echo "   📋 Deployment will run: $pattern → validates $class_name"
+                fi
                 if [ -z "$TEST_CLASSES_TO_RUN" ]; then
                     TEST_CLASSES_TO_RUN="$pattern"
                 else
-                    TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                    # Check if this test class is already in the list (avoid duplicates)
+                    if [[ ",$TEST_CLASSES_TO_RUN," != *",$pattern,"* ]]; then
+                        TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                    fi
                 fi
-                # Add test class to coverage check (not the main class)
-                if [ -z "$CLASSES_TO_CHECK" ]; then
-                    CLASSES_TO_CHECK="$pattern"
-                else
-                    CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$pattern"
+                # Add test class to coverage check (not the main class) - avoid duplicates
+                if [[ ",$CLASSES_TO_CHECK," != *",$pattern,"* ]]; then
+                    if [ -z "$CLASSES_TO_CHECK" ]; then
+                        CLASSES_TO_CHECK="$pattern"
+                    else
+                        CLASSES_TO_CHECK="$CLASSES_TO_CHECK,$pattern"
+                    fi
                 fi
                 found_test=true
                 break
@@ -108,11 +117,19 @@ if [ -n "$CHANGED_TEST_CLASSES" ]; then
 
         echo "🧪 Changed test class: $test_class_name"
 
-        # Add test class to run list
+        # Check if this test class is already scheduled to run
+        if [[ ",$TEST_CLASSES_TO_RUN," == *",$test_class_name,"* ]]; then
+            echo "   ⚠️  Test class $test_class_name already scheduled (from regular class change) - skipping duplicate"
+        fi
+
+        # Add test class to run list (avoid duplicates)
         if [ -z "$TEST_CLASSES_TO_RUN" ]; then
             TEST_CLASSES_TO_RUN="$test_class_name"
         else
-            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test_class_name"
+            # Check if this test class is already in the list (avoid duplicates)
+            if [[ ",$TEST_CLASSES_TO_RUN," != *",$test_class_name,"* ]]; then
+                TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test_class_name"
+            fi
         fi
 
         # Add test class to coverage check list (we only check test class coverage)
