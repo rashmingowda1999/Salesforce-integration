@@ -223,111 +223,111 @@ jobs:
                 DEPLOY_RESULT=$(eval "$DEPLOY_CMD")
                 DEPLOY_EXIT_CODE=$?
 
-                  if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
-                    # Extract and display deployment ID
-                    DEPLOY_ID=$(echo "$DEPLOY_RESULT" | jq -r '.result.id // "Unknown"')
-                    echo "✅ Deployment completed successfully!"
-                    echo "📋 Deployment ID: $DEPLOY_ID"
+                if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
+                  # Extract and display deployment ID
+                  DEPLOY_ID=$(echo "$DEPLOY_RESULT" | jq -r '.result.id // "Unknown"')
+                  echo "✅ Deployment completed successfully!"
+                  echo "📋 Deployment ID: $DEPLOY_ID"
+                  echo ""
+
+                  # Show deployment summary
+                  echo "📊 Deployment Summary:"
+                  echo "$DEPLOY_RESULT" | jq -r '.result | "   • Components: \(.numberComponentsTotal // "0") total, \(.numberComponentsDeployed // "0") deployed"'
+                  echo "$DEPLOY_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
+                  echo "$DEPLOY_RESULT" | jq -r '.result | "   • Start Time: \(.startDate // "Unknown")"'
+
+                  # Show test results if tests were run
+                  TEST_RESULTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult // empty')
+                  if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
                     echo ""
+                    echo "🧪 Test Results:"
+                    echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
+                    echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
 
-                    # Show deployment summary
-                    echo "📊 Deployment Summary:"
-                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Components: \(.numberComponentsTotal // "0") total, \(.numberComponentsDeployed // "0") deployed"'
-                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
-                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Start Time: \(.startDate // "Unknown")"'
+                    # Extract testRunCoverage for validation
+                    TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
 
-                    # Show test results if tests were run
-                    TEST_RESULTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult // empty')
-                    if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
-                      echo ""
-                      echo "🧪 Test Results:"
-                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
-                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
+                    if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+                      echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
 
-                      # Extract testRunCoverage for validation
-                      TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
+                      # Also show individual class coverage for deployed classes if available
+                      echo "   📋 Individual Class Coverage:"
+                      echo "$DEPLOY_RESULT" | jq -r '
+                        .result.details.runTestResult.coverage.coverage[]? // empty |
+                        select(.name != null) |
+                        "      • \(.name): \(.coveredPercent // "N/A")%"
+                      ' 2>/dev/null || echo "      (Individual coverage data not available)"
 
-                      if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
-                        echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
+                      # Validate testRunCoverage meets 85% threshold
+                      COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
+                      if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                        echo ""
+                        echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
+                        echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${{ env.COVERAGE_THRESHOLD }}% threshold."
+                        echo ""
+                        echo "🔧 Required Action:"
+                        echo "   • Improve test coverage in your test classes"
+                        echo "   • Ensure all code paths in your Apex classes are properly tested"
+                        echo "   • Test run coverage must be ≥ ${{ env.COVERAGE_THRESHOLD }}%"
+                        echo ""
+                        echo "💡 Test run coverage represents the overall coverage achieved by the test classes"
+                        echo "   that ran for this deployment (${TEST_CLASSES_TO_RUN:-"selected tests"})"
+                        exit 1
+                      else
+                        echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${{ env.COVERAGE_THRESHOLD }}% requirement"
+                        echo "   📊 This represents coverage achieved by: ${TEST_CLASSES_TO_RUN:-"selected tests"}"
+                      fi
+                    else
+                      echo "   ⚠️  Test run coverage not available in deployment results"
 
-                        # Also show individual class coverage for deployed classes if available
-                        echo "   📋 Individual Class Coverage:"
+                      # Try to extract and show individual coverage as fallback
+                      echo "   📋 Attempting to show individual class coverage:"
+                      HAS_COVERAGE_DATA=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | .name' 2>/dev/null | head -1)
+
+                      if [ -n "$HAS_COVERAGE_DATA" ]; then
                         echo "$DEPLOY_RESULT" | jq -r '
                           .result.details.runTestResult.coverage.coverage[]? // empty |
                           select(.name != null) |
                           "      • \(.name): \(.coveredPercent // "N/A")%"
-                        ' 2>/dev/null || echo "      (Individual coverage data not available)"
+                        ' 2>/dev/null
 
-                        # Validate testRunCoverage meets 85% threshold
-                        COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
-                        if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                        echo ""
+                        echo "⚠️  Using individual class coverage validation as fallback"
+                        echo "   Checking that all deployed classes meet ${{ env.COVERAGE_THRESHOLD }}% requirement..."
+
+                        # Validate individual classes meet threshold
+                        FAILED_CLASSES=""
+                        while IFS= read -r coverage_line; do
+                          if [ -n "$coverage_line" ]; then
+                            COVERAGE_PERCENT=$(echo "$coverage_line" | grep -o '[0-9]\+%' | sed 's/%//')
+                            CLASS_NAME=$(echo "$coverage_line" | sed 's/.*• \([^:]*\):.*/\1/')
+
+                            if [ -n "$COVERAGE_PERCENT" ] && [ "$COVERAGE_PERCENT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                              FAILED_CLASSES="${FAILED_CLASSES}\n   • ${CLASS_NAME}: ${COVERAGE_PERCENT}%"
+                            fi
+                          fi
+                        done < <(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | "• \(.name): \(.coveredPercent // 0)%"' 2>/dev/null)
+
+                        if [ -n "$FAILED_CLASSES" ]; then
                           echo ""
-                          echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
-                          echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${{ env.COVERAGE_THRESHOLD }}% threshold."
-                          echo ""
-                          echo "🔧 Required Action:"
-                          echo "   • Improve test coverage in your test classes"
-                          echo "   • Ensure all code paths in your Apex classes are properly tested"
-                          echo "   • Test run coverage must be ≥ ${{ env.COVERAGE_THRESHOLD }}%"
-                          echo ""
-                          echo "💡 Test run coverage represents the overall coverage achieved by the test classes"
-                          echo "   that ran for this deployment (${TEST_CLASSES_TO_RUN:-"selected tests"})"
+                          echo "❌ DEPLOYMENT FAILED - INSUFFICIENT CLASS COVERAGE!"
+                          echo "   The following classes do not meet the ${{ env.COVERAGE_THRESHOLD }}% threshold:"
+                          echo -e "$FAILED_CLASSES"
                           exit 1
                         else
-                          echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${{ env.COVERAGE_THRESHOLD }}% requirement"
-                          echo "   📊 This represents coverage achieved by: ${TEST_CLASSES_TO_RUN:-"selected tests"}"
+                          echo "   ✅ All deployed classes meet the coverage requirement"
                         fi
                       else
-                        echo "   ⚠️  Test run coverage not available in deployment results"
-
-                        # Try to extract and show individual coverage as fallback
-                        echo "   📋 Attempting to show individual class coverage:"
-                        HAS_COVERAGE_DATA=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | .name' 2>/dev/null | head -1)
-
-                        if [ -n "$HAS_COVERAGE_DATA" ]; then
-                          echo "$DEPLOY_RESULT" | jq -r '
-                            .result.details.runTestResult.coverage.coverage[]? // empty |
-                            select(.name != null) |
-                            "      • \(.name): \(.coveredPercent // "N/A")%"
-                          ' 2>/dev/null
-
-                          echo ""
-                          echo "⚠️  Using individual class coverage validation as fallback"
-                          echo "   Checking that all deployed classes meet ${{ env.COVERAGE_THRESHOLD }}% requirement..."
-
-                          # Validate individual classes meet threshold
-                          FAILED_CLASSES=""
-                          while IFS= read -r coverage_line; do
-                            if [ -n "$coverage_line" ]; then
-                              COVERAGE_PERCENT=$(echo "$coverage_line" | grep -o '[0-9]\+%' | sed 's/%//')
-                              CLASS_NAME=$(echo "$coverage_line" | sed 's/.*• \([^:]*\):.*/\1/')
-
-                              if [ -n "$COVERAGE_PERCENT" ] && [ "$COVERAGE_PERCENT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
-                                FAILED_CLASSES="${FAILED_CLASSES}\n   • ${CLASS_NAME}: ${COVERAGE_PERCENT}%"
-                              fi
-                            fi
-                          done < <(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | "• \(.name): \(.coveredPercent // 0)%"' 2>/dev/null)
-
-                          if [ -n "$FAILED_CLASSES" ]; then
-                            echo ""
-                            echo "❌ DEPLOYMENT FAILED - INSUFFICIENT CLASS COVERAGE!"
-                            echo "   The following classes do not meet the ${{ env.COVERAGE_THRESHOLD }}% threshold:"
-                            echo -e "$FAILED_CLASSES"
-                            exit 1
-                          else
-                            echo "   ✅ All deployed classes meet the coverage requirement"
-                          fi
-                        else
-                          echo "      (No coverage data available in deployment results)"
-                        fi
+                        echo "      (No coverage data available in deployment results)"
                       fi
                     fi
-                  else
-                    echo "❌ Deployment failed!"
-                    echo "Deployment output:"
-                    echo "$DEPLOY_RESULT"
-                    exit 1
                   fi
+                else
+                  echo "❌ Deployment failed!"
+                  echo "Deployment output:"
+                  echo "$DEPLOY_RESULT"
+                  exit 1
+                fi
                 else
                   echo "No changes detected for deployment"
                 fi
