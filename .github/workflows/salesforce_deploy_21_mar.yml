@@ -112,45 +112,60 @@ jobs:
 
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   HAS_ADDITIVE=true
+                  echo "✅ Additive changes detected"
                 fi
 
                 if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml" ]; then
                   HAS_DESTRUCTIVE=true
+                  echo "🚨 Main destructive changes detected"
                 fi
 
                 if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml" ]; then
                   HAS_PRE_DESTRUCTIVE=true
+                  echo "🚨 Pre-destructive changes detected"
                 fi
 
                 if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml" ]; then
                   HAS_POST_DESTRUCTIVE=true
+                  echo "🚨 Post-destructive changes detected"
                 fi
+
+                # Show what we detected
+                echo "📊 Deployment Analysis:"
+                echo "   • Additive changes: $HAS_ADDITIVE"
+                echo "   • Destructive changes: $HAS_DESTRUCTIVE"
+                echo "   • Pre-destructive changes: $HAS_PRE_DESTRUCTIVE"
+                echo "   • Post-destructive changes: $HAS_POST_DESTRUCTIVE"
 
                 if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = false ] && [ "$HAS_PRE_DESTRUCTIVE" = false ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
                   echo "📋 No changes detected for deployment"
                   exit 0
                 fi
 
+                echo ""
                 echo "🚀 Deploying changes to ${{ env.TARGET_ORG_ALIAS }}..."
 
                 # Determine deployment strategy based on change types
                 DEPLOY_CMD_BASE="sf project deploy start --target-org ${{ env.TARGET_ORG_ALIAS }} --json"
 
+                # Check if we need coverage validation (only for Apex/Trigger additive changes)
+                NEEDS_COVERAGE_VALIDATION=false
+                TEST_CLASSES_TO_RUN=""
+
                 if [ "$HAS_ADDITIVE" = true ]; then
-                  echo "📦 Additive changes detected - will deploy package.xml"
+                  echo "📦 Processing additive changes..."
                   DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app"
 
-                  # Set up test execution for additive changes
+                  # Only check coverage for Apex classes and triggers in additive changes
                   APEX_FILES=$(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
+                  TRIGGER_FILES=$(find changed-sources/force-app -name "*.trigger" 2>/dev/null | wc -l)
                   TEST_FILES=$(find changed-sources/force-app -name "*Test.cls" 2>/dev/null | wc -l)
 
-                  if [ "$APEX_FILES" -gt 0 ] || [ "$TEST_FILES" -gt 0 ]; then
-                    echo "📋 Found Apex classes in deployment - identifying test classes to run..."
+                  if [ "$APEX_FILES" -gt 0 ] || [ "$TRIGGER_FILES" -gt 0 ] || [ "$TEST_FILES" -gt 0 ]; then
+                    echo "📋 Found Apex/Trigger classes - coverage validation required"
+                    NEEDS_COVERAGE_VALIDATION=true
 
                     # Find test classes for changed regular Apex classes
-                    TEST_CLASSES_TO_RUN=""
-
-                    # Process regular Apex classes (non-test)
                     for apex_file in $(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
                       CLASS_NAME=$(basename "$apex_file" .cls)
                       echo "   🔍 Regular class: $CLASS_NAME"
@@ -183,7 +198,7 @@ jobs:
                       fi
                     done
 
-                    # Add test level to deployment command
+                    # Add test execution to deployment command
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
                       echo "🧪 Running specific test classes: $TEST_CLASSES_TO_RUN"
                       DEPLOY_CMD="$DEPLOY_CMD --test-level RunSpecifiedTests --tests $TEST_CLASSES_TO_RUN"
@@ -192,26 +207,34 @@ jobs:
                       DEPLOY_CMD="$DEPLOY_CMD --test-level RunLocalTests"
                     fi
                   else
-                    echo "📋 No Apex classes - deploying without tests"
+                    echo "📋 No Apex/Trigger classes - deploying without coverage validation"
                     DEPLOY_CMD="$DEPLOY_CMD --test-level NoTestRun"
                   fi
                 fi
 
-                # Add destructive changes parameters
-                if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
-                  echo "🚨 Adding pre-destructive changes to deployment"
-                  DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes changed-sources/destructiveChanges/destructiveChangesPre.xml"
-                fi
-
-                if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
-                  echo "🚨 Adding post-destructive changes to deployment"
-                  DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChangesPost.xml"
-                fi
-
-                # Handle standalone destructive changes (when no additive changes exist)
+                # Handle destructive-only deployments
                 if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = true ]; then
-                  echo "🗑️  Deploying standalone destructive changes"
-                  DEPLOY_CMD="sf project deploy start --metadata-dir changed-sources/destructiveChanges --target-org ${{ env.TARGET_ORG_ALIAS }} --json --test-level NoTestRun"
+                  echo "🗑️  Deploying standalone destructive changes (no coverage validation needed)"
+                  DEPLOY_CMD="$DEPLOY_CMD_BASE --metadata-dir changed-sources/destructiveChanges --test-level NoTestRun"
+                fi
+
+                # Add destructive changes parameters to additive deployments
+                if [ "$HAS_ADDITIVE" = true ]; then
+                  if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
+                    echo "🚨 Adding pre-destructive changes to deployment"
+                    DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes changed-sources/destructiveChanges/destructiveChangesPre.xml"
+                  fi
+
+                  if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
+                    echo "🚨 Adding post-destructive changes to deployment"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChangesPost.xml"
+                  fi
+
+                  # Handle main destructive changes as post-destructive if no explicit post file
+                  if [ "$HAS_DESTRUCTIVE" = true ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
+                    echo "🚨 Adding main destructive changes as post-destructive"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChanges.xml"
+                  fi
                 fi
 
                 echo ""
@@ -236,100 +259,108 @@ jobs:
                   echo "$DEPLOY_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
                   echo "$DEPLOY_RESULT" | jq -r '.result | "   • Start Time: \(.startDate // "Unknown")"'
 
-                  # Show test results if tests were run
-                  TEST_RESULTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult // empty')
-                  if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
-                    echo ""
-                    echo "🧪 Test Results:"
-                    echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
-                    echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
+                  # Show test results if tests were run (only for Apex/Trigger deployments)
+                  if [ "$NEEDS_COVERAGE_VALIDATION" = true ]; then
+                    TEST_RESULTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult // empty')
+                    if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
+                      echo ""
+                      echo "🧪 Test Results:"
+                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
+                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
 
-                    # Extract testRunCoverage for validation
-                    TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
+                      # Extract testRunCoverage for validation
+                      TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
 
-                    if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
-                      echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
+                      if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+                        echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
 
-                      # Also show individual class coverage for deployed classes if available
-                      echo "   📋 Individual Class Coverage:"
-                      echo "$DEPLOY_RESULT" | jq -r '
-                        .result.details.runTestResult.coverage.coverage[]? // empty |
-                        select(.name != null) |
-                        "      • \(.name): \(.coveredPercent // "N/A")%"
-                      ' 2>/dev/null || echo "      (Individual coverage data not available)"
-
-                      # Validate testRunCoverage meets 85% threshold
-                      COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
-                      if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
-                        echo ""
-                        echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
-                        echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${{ env.COVERAGE_THRESHOLD }}% threshold."
-                        echo ""
-                        echo "🔧 Required Action:"
-                        echo "   • Improve test coverage in your test classes"
-                        echo "   • Ensure all code paths in your Apex classes are properly tested"
-                        echo "   • Test run coverage must be ≥ ${{ env.COVERAGE_THRESHOLD }}%"
-                        echo ""
-                        echo "💡 Test run coverage represents the overall coverage achieved by the test classes"
-                        echo "   that ran for this deployment (${TEST_CLASSES_TO_RUN:-"selected tests"})"
-                        exit 1
-                      else
-                        echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${{ env.COVERAGE_THRESHOLD }}% requirement"
-                        echo "   📊 This represents coverage achieved by: ${TEST_CLASSES_TO_RUN:-"selected tests"}"
-                      fi
-                    else
-                      echo "   ⚠️  Test run coverage not available in deployment results"
-
-                      # Try to extract and show individual coverage as fallback
-                      echo "   📋 Attempting to show individual class coverage:"
-                      HAS_COVERAGE_DATA=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | .name' 2>/dev/null | head -1)
-
-                      if [ -n "$HAS_COVERAGE_DATA" ]; then
+                        # Also show individual class coverage for deployed classes if available
+                        echo "   📋 Individual Class Coverage:"
                         echo "$DEPLOY_RESULT" | jq -r '
                           .result.details.runTestResult.coverage.coverage[]? // empty |
                           select(.name != null) |
                           "      • \(.name): \(.coveredPercent // "N/A")%"
-                        ' 2>/dev/null
+                        ' 2>/dev/null || echo "      (Individual coverage data not available)"
 
-                        echo ""
-                        echo "⚠️  Using individual class coverage validation as fallback"
-                        echo "   Checking that all deployed classes meet ${{ env.COVERAGE_THRESHOLD }}% requirement..."
-
-                        # Validate individual classes meet threshold
-                        FAILED_CLASSES=""
-                        while IFS= read -r coverage_line; do
-                          if [ -n "$coverage_line" ]; then
-                            COVERAGE_PERCENT=$(echo "$coverage_line" | grep -o '[0-9]\+%' | sed 's/%//')
-                            CLASS_NAME=$(echo "$coverage_line" | sed 's/.*• \([^:]*\):.*/\1/')
-
-                            if [ -n "$COVERAGE_PERCENT" ] && [ "$COVERAGE_PERCENT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
-                              FAILED_CLASSES="${FAILED_CLASSES}\n   • ${CLASS_NAME}: ${COVERAGE_PERCENT}%"
-                            fi
-                          fi
-                        done < <(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | "• \(.name): \(.coveredPercent // 0)%"' 2>/dev/null)
-
-                        if [ -n "$FAILED_CLASSES" ]; then
+                        # Validate testRunCoverage meets 85% threshold
+                        COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
+                        if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
                           echo ""
-                          echo "❌ DEPLOYMENT FAILED - INSUFFICIENT CLASS COVERAGE!"
-                          echo "   The following classes do not meet the ${{ env.COVERAGE_THRESHOLD }}% threshold:"
-                          echo -e "$FAILED_CLASSES"
+                          echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
+                          echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${{ env.COVERAGE_THRESHOLD }}% threshold."
+                          echo ""
+                          echo "🔧 Required Action:"
+                          echo "   • Improve test coverage in your test classes"
+                          echo "   • Ensure all code paths in your Apex classes are properly tested"
+                          echo "   • Test run coverage must be ≥ ${{ env.COVERAGE_THRESHOLD }}%"
+                          echo ""
+                          echo "💡 Test run coverage represents the overall coverage achieved by the test classes"
+                          echo "   that ran for this deployment (${TEST_CLASSES_TO_RUN:-"selected tests"})"
                           exit 1
                         else
-                          echo "   ✅ All deployed classes meet the coverage requirement"
+                          echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${{ env.COVERAGE_THRESHOLD }}% requirement"
+                          echo "   📊 This represents coverage achieved by: ${TEST_CLASSES_TO_RUN:-"selected tests"}"
                         fi
                       else
-                        echo "      (No coverage data available in deployment results)"
+                        echo "   ⚠️  Test run coverage not available in deployment results"
+
+                        # Try to extract and show individual coverage as fallback
+                        echo "   📋 Attempting to show individual class coverage:"
+                        HAS_COVERAGE_DATA=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | .name' 2>/dev/null | head -1)
+
+                        if [ -n "$HAS_COVERAGE_DATA" ]; then
+                          echo "$DEPLOY_RESULT" | jq -r '
+                            .result.details.runTestResult.coverage.coverage[]? // empty |
+                            select(.name != null) |
+                            "      • \(.name): \(.coveredPercent // "N/A")%"
+                          ' 2>/dev/null
+
+                          echo ""
+                          echo "⚠️  Using individual class coverage validation as fallback"
+                          echo "   Checking that all deployed classes meet ${{ env.COVERAGE_THRESHOLD }}% requirement..."
+
+                          # Validate individual classes meet threshold
+                          FAILED_CLASSES=""
+                          while IFS= read -r coverage_line; do
+                            if [ -n "$coverage_line" ]; then
+                              COVERAGE_PERCENT=$(echo "$coverage_line" | grep -o '[0-9]\+%' | sed 's/%//')
+                              CLASS_NAME=$(echo "$coverage_line" | sed 's/.*• \([^:]*\):.*/\1/')
+
+                              if [ -n "$COVERAGE_PERCENT" ] && [ "$COVERAGE_PERCENT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                                FAILED_CLASSES="${FAILED_CLASSES}\n   • ${CLASS_NAME}: ${COVERAGE_PERCENT}%"
+                              fi
+                            fi
+                          done < <(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.coverage[]? // empty | select(.name != null) | "• \(.name): \(.coveredPercent // 0)%"' 2>/dev/null)
+
+                          if [ -n "$FAILED_CLASSES" ]; then
+                            echo ""
+                            echo "❌ DEPLOYMENT FAILED - INSUFFICIENT CLASS COVERAGE!"
+                            echo "   The following classes do not meet the ${{ env.COVERAGE_THRESHOLD }}% threshold:"
+                            echo -e "$FAILED_CLASSES"
+                            exit 1
+                          else
+                            echo "   ✅ All deployed classes meet the coverage requirement"
+                          fi
+                        else
+                          echo "      (No coverage data available in deployment results)"
+                        fi
                       fi
+                    else
+                      echo ""
+                      echo "🧪 Test Results:"
+                      echo "   ⚠️  No test execution data found in deployment results"
                     fi
+                  else
+                    echo ""
+                    echo "🎯 Coverage Validation Skipped:"
+                    echo "   📋 No Apex/Trigger classes in deployment"
+                    echo "   ✅ Coverage validation not required for this deployment type"
                   fi
                 else
                   echo "❌ Deployment failed!"
                   echo "Deployment output:"
                   echo "$DEPLOY_RESULT"
                   exit 1
-                fi
-                else
-                  echo "No changes detected for deployment"
                 fi
 
           - name: 'Post-destructive changes validation'
@@ -343,13 +374,14 @@ jobs:
             id: additional_coverage_validation
             run: |
                 # This step provides additional detailed coverage validation
-                # Tests already ran during deployment, but this gives more detailed reporting
+                # Only runs for deployments with Apex/Trigger classes
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
-                  # Check if there are Apex classes that need coverage validation
+                  # Check if there are Apex/Trigger classes that need coverage validation
                   APEX_FILES=$(find changed-sources/force-app -name "*.cls" 2>/dev/null | wc -l)
+                  TRIGGER_FILES=$(find changed-sources/force-app -name "*.trigger" 2>/dev/null | wc -l)
 
-                  if [ "$APEX_FILES" -gt 0 ]; then
-                    echo "📊 Running additional detailed coverage validation for changed classes..."
+                  if [ "$APEX_FILES" -gt 0 ] || [ "$TRIGGER_FILES" -gt 0 ]; then
+                    echo "📊 Running additional detailed coverage validation for Apex/Trigger classes..."
                     echo "(Tests already ran during deployment - this provides detailed coverage analysis)"
 
                     # Make the script executable
@@ -361,10 +393,16 @@ jobs:
                       "${{ env.TARGET_ORG_ALIAS }}" \
                       "${{ env.COVERAGE_THRESHOLD }}"
                   else
-                    echo "📋 No Apex classes in deployment - skipping additional coverage validation"
+                    echo "✅ No Apex/Trigger classes in deployment"
+                    echo "📋 Coverage validation not required for this deployment type"
+                    echo "   • Only Apex classes and triggers require test coverage"
+                    echo "   • Other metadata types (fields, objects, flows, etc.) do not need coverage"
                   fi
                 else
-                  echo "No package.xml found, skipping additional coverage validation"
+                  echo "📋 No additive changes detected"
+                  echo "✅ Destructive-only deployments do not require coverage validation"
+                  echo "   • Deletions do not need test coverage"
+                  echo "   • Coverage is only required when adding/modifying Apex code"
                 fi
 
           - name: 'Cleanup'
