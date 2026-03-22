@@ -61,12 +61,69 @@ jobs:
 
           - name: 'Deploy to environment'
             run: |
-                # Deploy without running tests first, then we'll run our targeted coverage validation
+                # Deploy with running relevant test classes for changed Apex classes
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   echo "🚀 Deploying changed components to ${{ env.TARGET_ORG_ALIAS }}..."
 
-                  # Deploy with JSON output to capture deployment ID
-                  DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                  # Check if there are any Apex classes in the deployment
+                  APEX_FILES=$(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
+                  TEST_FILES=$(find changed-sources/force-app -name "*Test.cls" 2>/dev/null | wc -l)
+
+                  if [ "$APEX_FILES" -gt 0 ] || [ "$TEST_FILES" -gt 0 ]; then
+                    echo "📋 Found Apex classes in deployment - identifying test classes to run..."
+
+                    # Find test classes for changed regular Apex classes
+                    TEST_CLASSES_TO_RUN=""
+
+                    # Process regular Apex classes (non-test)
+                    for apex_file in $(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
+                      # Extract class name from file path
+                      CLASS_NAME=$(basename "$apex_file" .cls)
+                      echo "   🔍 Regular class: $CLASS_NAME"
+
+                      # Look for corresponding test class patterns
+                      for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
+                        TEST_FILE="changed-sources/force-app/main/default/classes/${pattern}.cls"
+                        if [ -f "$TEST_FILE" ]; then
+                          echo "   ✅ Found test class: $pattern"
+                          if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                            TEST_CLASSES_TO_RUN="$pattern"
+                          else
+                            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                          fi
+                          break
+                        fi
+                      done
+                    done
+
+                    # Process test classes directly
+                    for test_file in $(find changed-sources/force-app -name "*Test.cls" 2>/dev/null || true); do
+                      TEST_CLASS_NAME=$(basename "$test_file" .cls)
+                      echo "   🧪 Test class: $TEST_CLASS_NAME"
+
+                      # Add to test classes if not already included
+                      if [[ ",$TEST_CLASSES_TO_RUN," != *",$TEST_CLASS_NAME,"* ]]; then
+                        if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                          TEST_CLASSES_TO_RUN="$TEST_CLASS_NAME"
+                        else
+                          TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$TEST_CLASS_NAME"
+                        fi
+                      fi
+                    done
+
+                    # Deploy with specific test classes or all local tests
+                    if [ -n "$TEST_CLASSES_TO_RUN" ]; then
+                      echo "🧪 Running specific test classes during deployment: $TEST_CLASSES_TO_RUN"
+                      DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level RunSpecifiedTests --tests "$TEST_CLASSES_TO_RUN" --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                    else
+                      echo "⚠️  No test classes found for Apex classes - using RunLocalTests"
+                      DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                    fi
+                  else
+                    echo "📋 No Apex classes in deployment - deploying without running tests"
+                    DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                  fi
+
                   DEPLOY_EXIT_CODE=$?
 
                   if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
@@ -81,6 +138,16 @@ jobs:
                     echo "$DEPLOY_RESULT" | jq -r '.result | "   • Components: \(.numberComponentsTotal // "0") total, \(.numberComponentsDeployed // "0") deployed"'
                     echo "$DEPLOY_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
                     echo "$DEPLOY_RESULT" | jq -r '.result | "   • Start Time: \(.startDate // "Unknown")"'
+
+                    # Show test results if tests were run
+                    TEST_RESULTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult // empty')
+                    if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
+                      echo ""
+                      echo "🧪 Test Results:"
+                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
+                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
+                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Coverage: \(.totalCoverage // "N/A")%"'
+                    fi
                   else
                     echo "❌ Deployment failed!"
                     echo "Deployment output:"
@@ -91,21 +158,32 @@ jobs:
                   echo "No package.xml found, skipping deployment"
                 fi
 
-          - name: 'Validate coverage for changed Apex classes'
-            id: validate_changed_coverage
+          - name: 'Additional coverage validation (if needed)'
+            id: additional_coverage_validation
             run: |
-                # Make the script executable
-                chmod +x scripts/ci/check_changed_apex_coverage.sh
-
-                # Run coverage validation for changed classes only (if package.xml exists)
+                # This step provides additional detailed coverage validation
+                # Tests already ran during deployment, but this gives more detailed reporting
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
-                  echo "Running targeted coverage validation for changed classes..."
-                  scripts/ci/check_changed_apex_coverage.sh \
-                    "${{ env.DELTA_DIR }}" \
-                    "${{ env.TARGET_ORG_ALIAS }}" \
-                    "${{ env.COVERAGE_THRESHOLD }}"
+                  # Check if there are Apex classes that need coverage validation
+                  APEX_FILES=$(find changed-sources/force-app -name "*.cls" 2>/dev/null | wc -l)
+
+                  if [ "$APEX_FILES" -gt 0 ]; then
+                    echo "📊 Running additional detailed coverage validation for changed classes..."
+                    echo "(Tests already ran during deployment - this provides detailed coverage analysis)"
+
+                    # Make the script executable
+                    chmod +x scripts/ci/check_changed_apex_coverage.sh
+
+                    # Run detailed coverage validation
+                    scripts/ci/check_changed_apex_coverage.sh \
+                      "${{ env.DELTA_DIR }}" \
+                      "${{ env.TARGET_ORG_ALIAS }}" \
+                      "${{ env.COVERAGE_THRESHOLD }}"
+                  else
+                    echo "📋 No Apex classes in deployment - skipping additional coverage validation"
+                  fi
                 else
-                  echo "No package.xml found, skipping coverage validation"
+                  echo "No package.xml found, skipping additional coverage validation"
                 fi
 
           - name: 'Cleanup'
