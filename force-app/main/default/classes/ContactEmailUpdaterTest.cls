@@ -2,7 +2,7 @@
 private class ContactEmailUpdaterTest {
 
     /**
-     * Test data setup - creates test contacts
+     * Test data setup - creates test contacts1
      */
     @testSetup
     static void setupTestData() {
