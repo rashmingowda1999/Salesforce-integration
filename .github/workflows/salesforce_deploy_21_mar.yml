@@ -146,7 +146,36 @@ jobs:
                       echo "🧪 Test Results:"
                       echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
                       echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
-                      echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Coverage: \(.totalCoverage // "N/A")%"'
+
+                      # Extract testRunCoverage for validation
+                      TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.totalCoverage.testRunCoverage // .result.details.runTestResult.testRunCoverage // empty' 2>/dev/null || echo "")
+
+                      if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+                        echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
+
+                        # Validate testRunCoverage meets 85% threshold
+                        COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
+                        if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                          echo ""
+                          echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
+                          echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${{ env.COVERAGE_THRESHOLD }}% threshold."
+                          echo ""
+                          echo "🔧 Required Action:"
+                          echo "   • Improve test coverage in your test classes"
+                          echo "   • Ensure all code paths are properly tested"
+                          echo "   • Test run coverage must be ≥ ${{ env.COVERAGE_THRESHOLD }}%"
+                          exit 1
+                        else
+                          echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${{ env.COVERAGE_THRESHOLD }}% requirement"
+                        fi
+                      else
+                        echo "   ⚠️  Test run coverage not available in deployment results"
+                        # Show overall coverage as fallback
+                        TOTAL_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.totalCoverage // empty')
+                        if [ -n "$TOTAL_COVERAGE" ] && [ "$TOTAL_COVERAGE" != "null" ]; then
+                          echo "   • Overall Coverage: ${TOTAL_COVERAGE}%"
+                        fi
+                      fi
                     fi
                   else
                     echo "❌ Deployment failed!"
