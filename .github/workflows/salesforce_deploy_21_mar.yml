@@ -37,35 +37,110 @@ jobs:
                 # Show git changes for debugging
                 echo "[DEBUG] Git diff between HEAD~1 and HEAD:"
                 git diff --name-only HEAD~1 HEAD
+                echo ""
+                echo "[DEBUG] Deleted files (destructive changes):"
+                git diff --name-only --diff-filter=D HEAD~1 HEAD
+                echo ""
 
-                # Run delta generation
+                # Run delta generation with destructive changes support
+                echo "🔄 Generating delta packages with destructive changes support..."
                 sf sgd source delta --to "HEAD" --from "HEAD~1" --output-dir changed-sources/ --generate-delta --source-dir force-app/
-                echo "[INFO] Diff generated"
+                echo "[INFO] Delta generation completed"
 
                 # Show what was created
+                echo ""
                 echo "[DEBUG] Contents of changed-sources directory:"
-                ls -la changed-sources/
+                find changed-sources/ -type f -name "*.xml" 2>/dev/null | head -20
 
-                # Check if package.xml exists and show its content
+                # Check for package.xml and destructive changes
                 if [ -f "changed-sources/package/package.xml" ]; then
-                  echo "[DEBUG] package.xml found, content:"
-                  cat changed-sources/package/package.xml
+                  echo ""
+                  echo "✅ [ADDITIVE CHANGES] package.xml found:"
+                  cat changed-sources/package/package.xml | head -20
+                  echo "..."
                 else
-                  echo "[DEBUG] No package.xml was created"
+                  echo ""
+                  echo "📋 [INFO] No additive package.xml was created"
                 fi
+
+                if [ -f "changed-sources/destructiveChanges/destructiveChanges.xml" ]; then
+                  echo ""
+                  echo "🚨 [DESTRUCTIVE CHANGES] destructiveChanges.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChanges.xml
+                  echo ""
+                  echo "⚠️  CAUTION: This deployment includes component deletions!"
+                else
+                  echo ""
+                  echo "✅ [INFO] No destructive changes detected"
+                fi
+
+                # Check for pre/post destructive changes
+                if [ -f "changed-sources/destructiveChanges/destructiveChangesPost.xml" ]; then
+                  echo ""
+                  echo "🚨 [POST-DESTRUCTIVE] destructiveChangesPost.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChangesPost.xml
+                else
+                  echo "📋 [INFO] No post-destructive changes detected"
+                fi
+
+                if [ -f "changed-sources/destructiveChanges/destructiveChangesPre.xml" ]; then
+                  echo ""
+                  echo "🚨 [PRE-DESTRUCTIVE] destructiveChangesPre.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChangesPre.xml
+                else
+                  echo "📋 [INFO] No pre-destructive changes detected"
+                fi
+
+          - name: 'Pre-destructive changes validation'
+            run: |
+                # Make the script executable and run pre-destructive validation
+                chmod +x scripts/ci/pre_destructive_validation.sh
+                scripts/ci/pre_destructive_validation.sh "${{ env.DELTA_DIR }}"
 
           - name: 'Authenticate with Salesforce'
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
 
-          - name: 'Deploy to environment'
+          - name: 'Deploy to environment with destructive changes'
             run: |
-                # Deploy with running relevant test classes for changed Apex classes
-                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
-                  echo "🚀 Deploying changed components to ${{ env.TARGET_ORG_ALIAS }}..."
+                # Check for both additive and destructive changes
+                HAS_ADDITIVE=false
+                HAS_DESTRUCTIVE=false
+                HAS_PRE_DESTRUCTIVE=false
+                HAS_POST_DESTRUCTIVE=false
 
-                  # Check if there are any Apex classes in the deployment
+                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                  HAS_ADDITIVE=true
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml" ]; then
+                  HAS_DESTRUCTIVE=true
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml" ]; then
+                  HAS_PRE_DESTRUCTIVE=true
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml" ]; then
+                  HAS_POST_DESTRUCTIVE=true
+                fi
+
+                if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = false ] && [ "$HAS_PRE_DESTRUCTIVE" = false ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
+                  echo "📋 No changes detected for deployment"
+                  exit 0
+                fi
+
+                echo "🚀 Deploying changes to ${{ env.TARGET_ORG_ALIAS }}..."
+
+                # Determine deployment strategy based on change types
+                DEPLOY_CMD_BASE="sf project deploy start --target-org ${{ env.TARGET_ORG_ALIAS }} --json"
+
+                if [ "$HAS_ADDITIVE" = true ]; then
+                  echo "📦 Additive changes detected - will deploy package.xml"
+                  DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app"
+
+                  # Set up test execution for additive changes
                   APEX_FILES=$(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
                   TEST_FILES=$(find changed-sources/force-app -name "*Test.cls" 2>/dev/null | wc -l)
 
@@ -77,11 +152,9 @@ jobs:
 
                     # Process regular Apex classes (non-test)
                     for apex_file in $(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
-                      # Extract class name from file path
                       CLASS_NAME=$(basename "$apex_file" .cls)
                       echo "   🔍 Regular class: $CLASS_NAME"
 
-                      # Look for corresponding test class patterns
                       for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
                         TEST_FILE="changed-sources/force-app/main/default/classes/${pattern}.cls"
                         if [ -f "$TEST_FILE" ]; then
@@ -101,7 +174,6 @@ jobs:
                       TEST_CLASS_NAME=$(basename "$test_file" .cls)
                       echo "   🧪 Test class: $TEST_CLASS_NAME"
 
-                      # Add to test classes if not already included
                       if [[ ",$TEST_CLASSES_TO_RUN," != *",$TEST_CLASS_NAME,"* ]]; then
                         if [ -z "$TEST_CLASSES_TO_RUN" ]; then
                           TEST_CLASSES_TO_RUN="$TEST_CLASS_NAME"
@@ -111,20 +183,45 @@ jobs:
                       fi
                     done
 
-                    # Deploy with specific test classes or all local tests
+                    # Add test level to deployment command
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
-                      echo "🧪 Running specific test classes during deployment: $TEST_CLASSES_TO_RUN"
-                      DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level RunSpecifiedTests --tests "$TEST_CLASSES_TO_RUN" --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                      echo "🧪 Running specific test classes: $TEST_CLASSES_TO_RUN"
+                      DEPLOY_CMD="$DEPLOY_CMD --test-level RunSpecifiedTests --tests $TEST_CLASSES_TO_RUN"
                     else
-                      echo "⚠️  No test classes found for Apex classes - using RunLocalTests"
-                      DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level RunLocalTests --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                      echo "⚠️  No test classes found - using RunLocalTests"
+                      DEPLOY_CMD="$DEPLOY_CMD --test-level RunLocalTests"
                     fi
                   else
-                    echo "📋 No Apex classes in deployment - deploying without running tests"
-                    DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                    echo "📋 No Apex classes - deploying without tests"
+                    DEPLOY_CMD="$DEPLOY_CMD --test-level NoTestRun"
                   fi
+                fi
 
-                  DEPLOY_EXIT_CODE=$?
+                # Add destructive changes parameters
+                if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
+                  echo "🚨 Adding pre-destructive changes to deployment"
+                  DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes changed-sources/destructiveChanges/destructiveChangesPre.xml"
+                fi
+
+                if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
+                  echo "🚨 Adding post-destructive changes to deployment"
+                  DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChangesPost.xml"
+                fi
+
+                # Handle standalone destructive changes (when no additive changes exist)
+                if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = true ]; then
+                  echo "🗑️  Deploying standalone destructive changes"
+                  DEPLOY_CMD="sf project deploy start --metadata-dir changed-sources/destructiveChanges --target-org ${{ env.TARGET_ORG_ALIAS }} --json --test-level NoTestRun"
+                fi
+
+                echo ""
+                echo "[DEBUG] Final deployment command:"
+                echo "$DEPLOY_CMD"
+                echo ""
+
+                # Execute deployment
+                DEPLOY_RESULT=$(eval "$DEPLOY_CMD")
+                DEPLOY_EXIT_CODE=$?
 
                   if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
                     # Extract and display deployment ID
@@ -232,8 +329,15 @@ jobs:
                     exit 1
                   fi
                 else
-                  echo "No package.xml found, skipping deployment"
+                  echo "No changes detected for deployment"
                 fi
+
+          - name: 'Post-destructive changes validation'
+            if: always()
+            run: |
+                # Make the script executable and run post-destructive validation
+                chmod +x scripts/ci/post_destructive_validation.sh
+                scripts/ci/post_destructive_validation.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}"
 
           - name: 'Additional coverage validation (if needed)'
             id: additional_coverage_validation
