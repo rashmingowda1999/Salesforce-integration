@@ -6,7 +6,7 @@ public class ContactEmailUpdater {
      * @param newEmail The new email address
      */
     public static void updateContactEmail(Id contactId, String newEmail) {
-        // Validate input parameters1
+        // Validate input parameters
         if (contactId == null) {
             throw new IllegalArgumentException('Contact ID cannot be null');
         }

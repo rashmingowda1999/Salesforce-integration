@@ -204,6 +204,9 @@ echo ""
 echo "Running tests and collecting coverage..."
 TEST_RESULT_FILE="test-result-$(date +%s).json"
 
+echo "[DEBUG] Executing command:"
+echo "sf apex run test --target-org \"$TARGET_ORG_ALIAS\" --class-names \"$TEST_CLASSES_TO_RUN\" --code-coverage --result-format json --wait 10 --json"
+
 # Try to run tests synchronously first
 sf apex run test \
     --target-org "$TARGET_ORG_ALIAS" \
@@ -211,14 +214,29 @@ sf apex run test \
     --code-coverage \
     --result-format json \
     --wait 10 \
-    --json > "$TEST_RESULT_FILE"
+    --json > "$TEST_RESULT_FILE" 2>&1
 
-echo "Test execution completed. Results saved to $TEST_RESULT_FILE"
+# Store the exit code
+TEST_EXIT_CODE=$?
+echo "Test execution completed with exit code: $TEST_EXIT_CODE. Results saved to $TEST_RESULT_FILE"
+
+# Always show what was written to the result file for debugging
+echo "[DEBUG] Test result file contents:"
+cat "$TEST_RESULT_FILE"
+echo "[DEBUG] End of test result file"
 
 # Check if test execution was successful
-if [ $? -ne 0 ]; then
-    echo "Test execution failed!"
-    cat "$TEST_RESULT_FILE"
+if [ $TEST_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ TEST EXECUTION FAILED!"
+    echo "Exit code: $TEST_EXIT_CODE"
+    echo "This could be due to:"
+    echo "• Test classes don't exist in the target org"
+    echo "• Authentication issues with the org"
+    echo "• Test compilation errors"
+    echo "• Org is unavailable or has issues"
+    echo ""
+    echo "Full error details above in test result file contents."
     exit 1
 fi
 
