@@ -1,7 +1,7 @@
 public class ContactEmailUpdater {
 
     /**
-     * Updates a contact's email address
+     * Updates a contact's email address1
      * @param contactId The ID of the contact to update
      * @param newEmail The new email address
      */
