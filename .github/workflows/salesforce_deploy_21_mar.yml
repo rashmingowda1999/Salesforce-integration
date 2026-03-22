@@ -242,9 +242,21 @@ jobs:
                 echo "$DEPLOY_CMD"
                 echo ""
 
-                # Execute deployment
-                DEPLOY_RESULT=$(eval "$DEPLOY_CMD")
+                # Execute deployment with detailed error capture
+                echo "🚀 Executing deployment..."
+                set +e  # Don't exit on error immediately
+                DEPLOY_RESULT=$(eval "$DEPLOY_CMD" 2>&1)
                 DEPLOY_EXIT_CODE=$?
+                set -e  # Re-enable exit on error
+
+                echo "📊 Deployment completed with exit code: $DEPLOY_EXIT_CODE"
+
+                # Always show the deployment result for debugging
+                echo ""
+                echo "[DEBUG] === FULL DEPLOYMENT RESULT ==="
+                echo "$DEPLOY_RESULT"
+                echo "[DEBUG] === END DEPLOYMENT RESULT ==="
+                echo ""
 
                 if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
                   # Extract and display deployment ID
