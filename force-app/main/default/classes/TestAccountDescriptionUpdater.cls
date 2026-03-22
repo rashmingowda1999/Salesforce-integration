@@ -2,7 +2,7 @@
 private class TestAccountDescriptionUpdater {
 
     /**
-     * Test data setup for AccountDescriptionUpdater test class.
+     * Test data setup for AccountDescriptionUpdater test class1.
      * Creates a test account with initial description.
      */
     @testSetup
