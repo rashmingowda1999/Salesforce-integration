@@ -63,9 +63,30 @@ jobs:
             run: |
                 # Deploy without running tests first, then we'll run our targeted coverage validation
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
-                  echo "Deploying changed components to ${{ env.TARGET_ORG_ALIAS }}..."
-                  sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }}
-                  echo "✅ Deployment completed successfully"
+                  echo "🚀 Deploying changed components to ${{ env.TARGET_ORG_ALIAS }}..."
+
+                  # Deploy with JSON output to capture deployment ID
+                  DEPLOY_RESULT=$(sf project deploy start --source-dir changed-sources/force-app --test-level NoTestRun --target-org ${{ env.TARGET_ORG_ALIAS }} --json)
+                  DEPLOY_EXIT_CODE=$?
+
+                  if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
+                    # Extract and display deployment ID
+                    DEPLOY_ID=$(echo "$DEPLOY_RESULT" | jq -r '.result.id // "Unknown"')
+                    echo "✅ Deployment completed successfully!"
+                    echo "📋 Deployment ID: $DEPLOY_ID"
+                    echo ""
+
+                    # Show deployment summary
+                    echo "📊 Deployment Summary:"
+                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Components: \(.numberComponentsTotal // "0") total, \(.numberComponentsDeployed // "0") deployed"'
+                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
+                    echo "$DEPLOY_RESULT" | jq -r '.result | "   • Start Time: \(.startDate // "Unknown")"'
+                  else
+                    echo "❌ Deployment failed!"
+                    echo "Deployment output:"
+                    echo "$DEPLOY_RESULT"
+                    exit 1
+                  fi
                 else
                   echo "No package.xml found, skipping deployment"
                 fi
