@@ -200,45 +200,109 @@ echo "📈 Coverage validation: testRunCoverage ≥ $COVERAGE_THRESHOLD%"
 echo "=========================================="
 echo ""
 
+# Pre-execution validation checks
+echo "🔍 Pre-execution validation checks..."
+
+# Check if SF CLI is available
+if ! command -v sf &> /dev/null; then
+    echo "❌ SF CLI not found! Please install Salesforce CLI."
+    exit 1
+fi
+echo "✅ SF CLI found"
+
+# Check if target org is accessible
+echo "🔗 Testing connection to target org: $TARGET_ORG_ALIAS"
+sf org display --target-org "$TARGET_ORG_ALIAS" --json > org_check.json 2>&1
+ORG_CHECK_EXIT_CODE=$?
+
+if [ $ORG_CHECK_EXIT_CODE -ne 0 ]; then
+    echo "❌ Cannot connect to target org: $TARGET_ORG_ALIAS"
+    echo "Org connection test output:"
+    cat org_check.json
+    rm -f org_check.json
+
+    echo ""
+    echo "🔧 Please verify:"
+    echo "• Org authentication is valid"
+    echo "• Org alias '$TARGET_ORG_ALIAS' exists"
+    echo "• Network connectivity to Salesforce"
+    exit 1
+else
+    echo "✅ Successfully connected to target org"
+    # Show org details for confirmation
+    ORG_USERNAME=$(cat org_check.json | jq -r '.result.username // "Unknown"')
+    ORG_INSTANCE_URL=$(cat org_check.json | jq -r '.result.instanceUrl // "Unknown"')
+    echo "   📋 Username: $ORG_USERNAME"
+    echo "   🔗 Instance: $ORG_INSTANCE_URL"
+fi
+rm -f org_check.json
+
 # Run the specific test classes and get coverage
-echo "Running tests and collecting coverage..."
+echo ""
+echo "🧪 Running tests and collecting coverage..."
 TEST_RESULT_FILE="test-result-$(date +%s).json"
+ERROR_LOG_FILE="error-log-$(date +%s).txt"
 
 echo "[DEBUG] Executing command:"
 echo "sf apex run test --target-org \"$TARGET_ORG_ALIAS\" --class-names \"$TEST_CLASSES_TO_RUN\" --code-coverage --result-format json --wait 10 --json"
+echo ""
 
-# Try to run tests synchronously first
+# Try to run tests synchronously first with separate error capture
+set +e  # Don't exit on error
 sf apex run test \
     --target-org "$TARGET_ORG_ALIAS" \
     --class-names "$TEST_CLASSES_TO_RUN" \
     --code-coverage \
     --result-format json \
     --wait 10 \
-    --json > "$TEST_RESULT_FILE" 2>&1
+    --json > "$TEST_RESULT_FILE" 2> "$ERROR_LOG_FILE"
 
 # Store the exit code
 TEST_EXIT_CODE=$?
-echo "Test execution completed with exit code: $TEST_EXIT_CODE. Results saved to $TEST_RESULT_FILE"
+set -e  # Re-enable exit on error
 
-# Always show what was written to the result file for debugging
-echo "[DEBUG] Test result file contents:"
-cat "$TEST_RESULT_FILE"
-echo "[DEBUG] End of test result file"
+echo "Test execution completed with exit code: $TEST_EXIT_CODE"
+
+# Show both stdout and stderr for debugging
+echo ""
+echo "[DEBUG] === STDOUT (test result file) ==="
+if [ -f "$TEST_RESULT_FILE" ]; then
+    cat "$TEST_RESULT_FILE"
+else
+    echo "No test result file created"
+fi
+
+echo ""
+echo "[DEBUG] === STDERR (error log) ==="
+if [ -f "$ERROR_LOG_FILE" ]; then
+    cat "$ERROR_LOG_FILE"
+else
+    echo "No error log file created"
+fi
+echo "[DEBUG] === End of debug output ==="
 
 # Check if test execution was successful
 if [ $TEST_EXIT_CODE -ne 0 ]; then
     echo ""
     echo "❌ TEST EXECUTION FAILED!"
     echo "Exit code: $TEST_EXIT_CODE"
-    echo "This could be due to:"
-    echo "• Test classes don't exist in the target org"
-    echo "• Authentication issues with the org"
-    echo "• Test compilation errors"
-    echo "• Org is unavailable or has issues"
     echo ""
-    echo "Full error details above in test result file contents."
+    echo "🔍 Common causes and solutions:"
+    echo "• Test classes don't exist in target org → Deploy classes first"
+    echo "• Authentication expired → Re-authenticate with the org"
+    echo "• Test compilation errors → Check syntax in test classes"
+    echo "• Insufficient permissions → Verify user can run Apex tests"
+    echo "• Org limits reached → Check test execution limits"
+    echo ""
+    echo "📋 Debug information above shows detailed error output."
+
+    # Clean up
+    rm -f "$TEST_RESULT_FILE" "$ERROR_LOG_FILE"
     exit 1
 fi
+
+# Clean up error log (test was successful)
+rm -f "$ERROR_LOG_FILE"
 
 # Check if we got a test run ID instead of full results (async execution)
 TEST_RUN_ID=$(jq -r '.result.testRunId // empty' "$TEST_RESULT_FILE" 2>/dev/null || echo "")
@@ -255,6 +319,7 @@ if [ -n "$TEST_RUN_ID" ] && [ -z "$COVERAGE_DATA" ]; then
     if [ $? -ne 0 ]; then
         echo "Failed to retrieve test results!"
         cat "$FINAL_RESULT_FILE"
+        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE" "$ERROR_LOG_FILE"
         exit 1
     fi
 
@@ -286,6 +351,7 @@ if [ -z "$COVERAGE_DATA" ] || [ "$COVERAGE_DATA" = "null" ]; then
     echo "Could not extract coverage data from test results"
     echo "Test result content:"
     cat "$TEST_RESULT_FILE"
+    rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE" "$ERROR_LOG_FILE"
     exit 1
 fi
 
@@ -319,7 +385,7 @@ if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
         echo "   • Add missing test cases for edge scenarios"
 
         # Clean up
-        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
+        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE" "$ERROR_LOG_FILE"
         exit 1
     else
         echo "✅ COVERAGE CHECK PASSED!"
@@ -328,7 +394,7 @@ if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
         echo "🚀 Deployment can proceed with confidence!"
 
         # Clean up
-        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
+        rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE" "$ERROR_LOG_FILE"
         echo "Coverage validation completed successfully."
         exit 0
     fi
@@ -405,5 +471,5 @@ else
 fi
 
 # Clean up
-rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE"
+rm -f "$TEST_RESULT_FILE" "$FINAL_RESULT_FILE" "$ERROR_LOG_FILE"
 echo "Coverage validation completed successfully."
