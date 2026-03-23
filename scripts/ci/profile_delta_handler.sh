@@ -9,121 +9,6 @@
 
 set -e
 
-DELTA_DIR="$1"
-GIT_FROM="$2"
-GIT_TO="$3"
-
-if [ -z "$DELTA_DIR" ] || [ -z "$GIT_FROM" ] || [ -z "$GIT_TO" ]; then
-    echo "Usage: $0 <delta_directory> <git_from> <git_to>"
-    echo "Example: $0 changed-sources HEAD~1 HEAD"
-    exit 1
-fi
-
-echo "🔍 Profile Delta Handler - Flosum-style Selective Deployment"
-echo "Delta directory: $DELTA_DIR"
-echo "Git range: $GIT_FROM → $GIT_TO"
-echo ""
-
-# Create profile-specific directories
-PROFILE_DELTA_DIR="$DELTA_DIR/profile-deltas"
-mkdir -p "$PROFILE_DELTA_DIR"
-
-# Detect changed profile files
-echo "📋 Detecting profile changes..."
-CHANGED_PROFILES=$(git diff --name-only "$GIT_FROM" "$GIT_TO" | grep "\.profile-meta\.xml$" || true)
-
-if [ -z "$CHANGED_PROFILES" ]; then
-    echo "✅ No profile changes detected"
-    echo "false" > "$PROFILE_DELTA_DIR/has_profile_changes.flag"
-    exit 0
-fi
-
-echo "🎯 Profile files changed:"
-echo "$CHANGED_PROFILES" | sed 's/^/   • /'
-echo ""
-
-# Flag that we have profile changes
-echo "true" > "$PROFILE_DELTA_DIR/has_profile_changes.flag"
-
-# Process each changed profile
-PROFILE_COUNT=0
-while IFS= read -r profile_file; do
-    if [ -z "$profile_file" ]; then
-        continue
-    fi
-
-    PROFILE_COUNT=$((PROFILE_COUNT + 1))
-    PROFILE_NAME=$(basename "$profile_file" .profile-meta.xml)
-
-    echo "🔄 Processing profile: $PROFILE_NAME"
-    echo "   File: $profile_file"
-
-    # Check if this is a new profile (added) or modified profile
-    if ! git cat-file -e "$GIT_FROM:$profile_file" 2>/dev/null; then
-        echo "   📝 Status: NEW profile (full deployment needed)"
-
-        # For new profiles, copy the entire file
-        PROFILE_OUTPUT_DIR="$PROFILE_DELTA_DIR/$PROFILE_NAME"
-        mkdir -p "$PROFILE_OUTPUT_DIR"
-
-        if [ -f "$profile_file" ]; then
-            cp "$profile_file" "$PROFILE_OUTPUT_DIR/${PROFILE_NAME}.profile-meta.xml"
-            echo "   ✅ Full profile copied for deployment"
-        else
-            echo "   ❌ Profile file not found: $profile_file"
-            continue
-        fi
-    else
-        echo "   📝 Status: MODIFIED profile (delta extraction needed)"
-
-        # Extract delta for modified profile
-        OLD_PROFILE_CONTENT=$(git show "$GIT_FROM:$profile_file")
-        NEW_PROFILE_CONTENT=$(cat "$profile_file" 2>/dev/null || echo "")
-
-        if [ -z "$NEW_PROFILE_CONTENT" ]; then
-            echo "   ❌ Could not read new profile content"
-            continue
-        fi
-
-        # Create delta profile directory
-        PROFILE_OUTPUT_DIR="$PROFILE_DELTA_DIR/$PROFILE_NAME"
-        mkdir -p "$PROFILE_OUTPUT_DIR"
-
-        # Generate delta profile XML
-        DELTA_PROFILE="$PROFILE_OUTPUT_DIR/${PROFILE_NAME}-delta.profile-meta.xml"
-
-        echo "   🔬 Extracting profile delta..."
-
-        # Call the profile delta extraction function
-        if extract_profile_delta "$OLD_PROFILE_CONTENT" "$NEW_PROFILE_CONTENT" "$DELTA_PROFILE" "$PROFILE_NAME"; then
-            echo "   ✅ Profile delta extracted successfully"
-        else
-            echo "   ⚠️  Delta extraction failed - deploying full profile as fallback"
-            cp "$profile_file" "$PROFILE_OUTPUT_DIR/${PROFILE_NAME}.profile-meta.xml"
-        fi
-    fi
-
-    # Create package.xml for this profile
-    create_profile_package_xml "$PROFILE_OUTPUT_DIR" "$PROFILE_NAME"
-
-    echo "   📦 Profile package created: $PROFILE_OUTPUT_DIR"
-    echo ""
-
-done <<< "$CHANGED_PROFILES"
-
-echo "📊 Profile Delta Summary:"
-echo "   • Profiles processed: $PROFILE_COUNT"
-echo "   • Delta packages created in: $PROFILE_DELTA_DIR"
-echo ""
-
-# Create master profile package.xml if we have multiple profiles
-if [ "$PROFILE_COUNT" -gt 1 ]; then
-    echo "🔗 Creating master profile package for multi-profile deployment..."
-    create_master_profile_package "$PROFILE_DELTA_DIR" "$PROFILE_COUNT"
-fi
-
-echo "✅ Profile delta processing completed successfully"
-
 # Function to extract delta between two profile XML files
 extract_profile_delta() {
     local old_content="$1"
@@ -437,54 +322,6 @@ extract_changed_tab_visibility() {
     fi
 }
 
-# Function to create package.xml for a profile
-create_profile_package_xml() {
-    local profile_dir="$1"
-    local profile_name="$2"
-
-    cat > "$profile_dir/package.xml" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<Package xmlns="http://soap.sforce.com/2006/04/metadata">
-    <types>
-        <members>$profile_name</members>
-        <name>Profile</name>
-    </types>
-    <version>65.0</version>
-</Package>
-EOF
-}
-
-# Function to create master package.xml for multiple profiles
-create_master_profile_package() {
-    local profile_delta_dir="$1"
-    local profile_count="$2"
-
-    local master_package="$profile_delta_dir/package.xml"
-
-    cat > "$master_package" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<Package xmlns="http://soap.sforce.com/2006/04/metadata">
-    <types>
-EOF
-
-    # Add all profile names
-    for profile_dir in "$profile_delta_dir"/*; do
-        if [ -d "$profile_dir" ]; then
-            local profile_name=$(basename "$profile_dir")
-            echo "        <members>$profile_name</members>" >> "$master_package"
-        fi
-    done
-
-    cat >> "$master_package" << 'EOF'
-        <name>Profile</name>
-    </types>
-    <version>65.0</version>
-</Package>
-EOF
-
-    echo "   📦 Master package.xml created with $profile_count profiles"
-}
-
 # Function to extract changed record type visibilities
 extract_changed_record_type_visibilities() {
     local old_file="$1"
@@ -724,3 +561,168 @@ extract_changed_external_data_source_access() {
         return 1
     fi
 }
+
+# Function to create package.xml for a profile
+create_profile_package_xml() {
+    local profile_dir="$1"
+    local profile_name="$2"
+
+    cat > "$profile_dir/package.xml" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>$profile_name</members>
+        <name>Profile</name>
+    </types>
+    <version>65.0</version>
+</Package>
+EOF
+}
+
+# Function to create master package.xml for multiple profiles
+create_master_profile_package() {
+    local profile_delta_dir="$1"
+    local profile_count="$2"
+
+    local master_package="$profile_delta_dir/package.xml"
+
+    cat > "$master_package" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+EOF
+
+    # Add all profile names
+    for profile_dir in "$profile_delta_dir"/*; do
+        if [ -d "$profile_dir" ]; then
+            local profile_name=$(basename "$profile_dir")
+            echo "        <members>$profile_name</members>" >> "$master_package"
+        fi
+    done
+
+    cat >> "$master_package" << 'EOF'
+        <name>Profile</name>
+    </types>
+    <version>65.0</version>
+</Package>
+EOF
+
+    echo "   📦 Master package.xml created with $profile_count profiles"
+}
+
+# ===== MAIN EXECUTION STARTS HERE =====
+
+DELTA_DIR="$1"
+GIT_FROM="$2"
+GIT_TO="$3"
+
+if [ -z "$DELTA_DIR" ] || [ -z "$GIT_FROM" ] || [ -z "$GIT_TO" ]; then
+    echo "Usage: $0 <delta_directory> <git_from> <git_to>"
+    echo "Example: $0 changed-sources HEAD~1 HEAD"
+    exit 1
+fi
+
+echo "🔍 Profile Delta Handler - Flosum-style Selective Deployment"
+echo "Delta directory: $DELTA_DIR"
+echo "Git range: $GIT_FROM → $GIT_TO"
+echo ""
+
+# Create profile-specific directories
+PROFILE_DELTA_DIR="$DELTA_DIR/profile-deltas"
+mkdir -p "$PROFILE_DELTA_DIR"
+
+# Detect changed profile files
+echo "📋 Detecting profile changes..."
+CHANGED_PROFILES=$(git diff --name-only "$GIT_FROM" "$GIT_TO" | grep "\.profile-meta\.xml$" || true)
+
+if [ -z "$CHANGED_PROFILES" ]; then
+    echo "✅ No profile changes detected"
+    echo "false" > "$PROFILE_DELTA_DIR/has_profile_changes.flag"
+    exit 0
+fi
+
+echo "🎯 Profile files changed:"
+echo "$CHANGED_PROFILES" | sed 's/^/   • /'
+echo ""
+
+# Flag that we have profile changes
+echo "true" > "$PROFILE_DELTA_DIR/has_profile_changes.flag"
+
+# Process each changed profile
+PROFILE_COUNT=0
+while IFS= read -r profile_file; do
+    if [ -z "$profile_file" ]; then
+        continue
+    fi
+
+    PROFILE_COUNT=$((PROFILE_COUNT + 1))
+    PROFILE_NAME=$(basename "$profile_file" .profile-meta.xml)
+
+    echo "🔄 Processing profile: $PROFILE_NAME"
+    echo "   File: $profile_file"
+
+    # Check if this is a new profile (added) or modified profile
+    if ! git cat-file -e "$GIT_FROM:$profile_file" 2>/dev/null; then
+        echo "   📝 Status: NEW profile (full deployment needed)"
+
+        # For new profiles, copy the entire file
+        PROFILE_OUTPUT_DIR="$PROFILE_DELTA_DIR/$PROFILE_NAME"
+        mkdir -p "$PROFILE_OUTPUT_DIR"
+
+        if [ -f "$profile_file" ]; then
+            cp "$profile_file" "$PROFILE_OUTPUT_DIR/${PROFILE_NAME}.profile-meta.xml"
+            echo "   ✅ Full profile copied for deployment"
+        else
+            echo "   ❌ Profile file not found: $profile_file"
+            continue
+        fi
+    else
+        echo "   📝 Status: MODIFIED profile (delta extraction needed)"
+
+        # Extract delta for modified profile
+        OLD_PROFILE_CONTENT=$(git show "$GIT_FROM:$profile_file")
+        NEW_PROFILE_CONTENT=$(cat "$profile_file" 2>/dev/null || echo "")
+
+        if [ -z "$NEW_PROFILE_CONTENT" ]; then
+            echo "   ❌ Could not read new profile content"
+            continue
+        fi
+
+        # Create delta profile directory
+        PROFILE_OUTPUT_DIR="$PROFILE_DELTA_DIR/$PROFILE_NAME"
+        mkdir -p "$PROFILE_OUTPUT_DIR"
+
+        # Generate delta profile XML
+        DELTA_PROFILE="$PROFILE_OUTPUT_DIR/${PROFILE_NAME}-delta.profile-meta.xml"
+
+        echo "   🔬 Extracting profile delta..."
+
+        # Call the profile delta extraction function
+        if extract_profile_delta "$OLD_PROFILE_CONTENT" "$NEW_PROFILE_CONTENT" "$DELTA_PROFILE" "$PROFILE_NAME"; then
+            echo "   ✅ Profile delta extracted successfully"
+        else
+            echo "   ⚠️  Delta extraction failed - deploying full profile as fallback"
+            cp "$profile_file" "$PROFILE_OUTPUT_DIR/${PROFILE_NAME}.profile-meta.xml"
+        fi
+    fi
+
+    # Create package.xml for this profile
+    create_profile_package_xml "$PROFILE_OUTPUT_DIR" "$PROFILE_NAME"
+
+    echo "   📦 Profile package created: $PROFILE_OUTPUT_DIR"
+    echo ""
+
+done <<< "$CHANGED_PROFILES"
+
+echo "📊 Profile Delta Summary:"
+echo "   • Profiles processed: $PROFILE_COUNT"
+echo "   • Delta packages created in: $PROFILE_DELTA_DIR"
+echo ""
+
+# Create master profile package.xml if we have multiple profiles
+if [ "$PROFILE_COUNT" -gt 1 ]; then
+    echo "🔗 Creating master profile package for multi-profile deployment..."
+    create_master_profile_package "$PROFILE_DELTA_DIR" "$PROFILE_COUNT"
+fi
+
+echo "✅ Profile delta processing completed successfully"
