@@ -185,7 +185,37 @@ jobs:
                           FIELD_COUNT=$(grep -c "<fieldPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
                           OBJECT_COUNT=$(grep -c "<objectPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
                           APEX_COUNT=$(grep -c "<classAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          echo "   📈 Changes: $FIELD_COUNT field permissions, $OBJECT_COUNT object permissions, $APEX_COUNT Apex classes"
+                          USER_PERM_COUNT=$(grep -c "<userPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          APP_VIS_COUNT=$(grep -c "<applicationVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          TAB_VIS_COUNT=$(grep -c "<tabVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          RECORD_TYPE_COUNT=$(grep -c "<recordTypeVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          PAGE_ACCESS_COUNT=$(grep -c "<pageAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          FLOW_ACCESS_COUNT=$(grep -c "<flowAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          CUSTOM_SETTING_COUNT=$(grep -c "<customSettingAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          LOGIN_HOURS_COUNT=$(grep -c "<loginHours>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          LOGIN_IP_COUNT=$(grep -c "<loginIpRanges>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          SESSION_TIMEOUT_COUNT=$(grep -c "<sessionTimeout>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          EXT_DATA_SOURCE_COUNT=$(grep -c "<externalDataSourceAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+
+                          echo "   📈 Permission Changes:"
+                          echo "      • Field permissions: $FIELD_COUNT"
+                          echo "      • Object permissions: $OBJECT_COUNT"
+                          echo "      • Apex class access: $APEX_COUNT"
+                          echo "      • User permissions: $USER_PERM_COUNT"
+                          echo "      • App visibilities: $APP_VIS_COUNT"
+                          echo "      • Tab visibilities: $TAB_VIS_COUNT"
+                          echo "      • Record type visibilities: $RECORD_TYPE_COUNT"
+                          echo "      • Visualforce page access: $PAGE_ACCESS_COUNT"
+                          echo "      • Flow access: $FLOW_ACCESS_COUNT"
+                          echo "      • Custom setting access: $CUSTOM_SETTING_COUNT"
+                          echo "      • Login hours: $LOGIN_HOURS_COUNT"
+                          echo "      • Login IP ranges: $LOGIN_IP_COUNT"
+                          echo "      • Session timeout: $SESSION_TIMEOUT_COUNT"
+                          echo "      • External data source access: $EXT_DATA_SOURCE_COUNT"
+
+                          # Calculate total changes
+                          TOTAL_CHANGES=$((FIELD_COUNT + OBJECT_COUNT + APEX_COUNT + USER_PERM_COUNT + APP_VIS_COUNT + TAB_VIS_COUNT + RECORD_TYPE_COUNT + PAGE_ACCESS_COUNT + FLOW_ACCESS_COUNT + CUSTOM_SETTING_COUNT + LOGIN_HOURS_COUNT + LOGIN_IP_COUNT + SESSION_TIMEOUT_COUNT + EXT_DATA_SOURCE_COUNT))
+                          echo "   🎯 Total elements changed: $TOTAL_CHANGES"
                         elif [ -f "$profile_dir/${PROFILE_NAME}.profile-meta.xml" ]; then
                           PROFILE_FILE="${PROFILE_NAME}.profile-meta.xml"
                           echo "   📦 Type: Full profile deployment (new profile)"

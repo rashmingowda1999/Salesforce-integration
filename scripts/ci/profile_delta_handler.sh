@@ -176,6 +176,46 @@ EOF
         has_changes=true
     fi
 
+    # Extract record type visibilities that changed
+    if extract_changed_record_type_visibilities "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract Visualforce page access that changed
+    if extract_changed_page_access "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract flow access that changed
+    if extract_changed_flow_access "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract custom setting access that changed
+    if extract_changed_custom_setting_access "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract login hours that changed
+    if extract_changed_login_hours "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract login IP ranges that changed
+    if extract_changed_login_ip_ranges "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract session timeout that changed
+    if extract_changed_session_timeout "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
+    # Extract external data source access that changed
+    if extract_changed_external_data_source_access "$temp_old" "$temp_new" "$output_file"; then
+        has_changes=true
+    fi
+
     # Close the profile XML
     echo "</Profile>" >> "$output_file"
 
@@ -443,4 +483,244 @@ EOF
 EOF
 
     echo "   📦 Master package.xml created with $profile_count profiles"
+}
+
+# Function to extract changed record type visibilities
+extract_changed_record_type_visibilities() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking record type visibilities..."
+
+    local new_record_types=$(grep -A 4 "<recordTypeVisibilities>" "$new_file" | grep "<recordType>" | sed 's/.*<recordType>\(.*\)<\/recordType>.*/\1/' | sort)
+
+    while IFS= read -r record_type; do
+        if [ -n "$record_type" ]; then
+            local new_rt_block=$(sed -n "/<recordTypeVisibilities>/,/<\/recordTypeVisibilities>/p" "$new_file" | sed -n "/<recordType>$record_type<\/recordType>/,/<\/recordTypeVisibilities>/p")
+            local old_rt_block=$(sed -n "/<recordTypeVisibilities>/,/<\/recordTypeVisibilities>/p" "$old_file" | sed -n "/<recordType>$record_type<\/recordType>/,/<\/recordTypeVisibilities>/p")
+
+            if [ -z "$old_rt_block" ] || [ "$new_rt_block" != "$old_rt_block" ]; then
+                echo "         • $record_type (changed/new)"
+                echo "    <recordTypeVisibilities>" >> "$output_file"
+                echo "$new_rt_block" | grep -v "<recordTypeVisibilities>" | grep -v "</recordTypeVisibilities>" >> "$output_file"
+                echo "    </recordTypeVisibilities>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_record_types"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed Visualforce page access
+extract_changed_page_access() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking Visualforce page access..."
+
+    local new_pages=$(grep -A 2 "<pageAccesses>" "$new_file" | grep "<apexPage>" | sed 's/.*<apexPage>\(.*\)<\/apexPage>.*/\1/' | sort)
+
+    while IFS= read -r page_name; do
+        if [ -n "$page_name" ]; then
+            local new_page_block=$(sed -n "/<pageAccesses>/,/<\/pageAccesses>/p" "$new_file" | sed -n "/<apexPage>$page_name<\/apexPage>/,/<\/pageAccesses>/p")
+            local old_page_block=$(sed -n "/<pageAccesses>/,/<\/pageAccesses>/p" "$old_file" | sed -n "/<apexPage>$page_name<\/apexPage>/,/<\/pageAccesses>/p")
+
+            if [ -z "$old_page_block" ] || [ "$new_page_block" != "$old_page_block" ]; then
+                echo "         • $page_name (changed/new)"
+                echo "    <pageAccesses>" >> "$output_file"
+                echo "$new_page_block" | grep -v "<pageAccesses>" | grep -v "</pageAccesses>" >> "$output_file"
+                echo "    </pageAccesses>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_pages"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed flow access
+extract_changed_flow_access() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking Flow access..."
+
+    local new_flows=$(grep -A 2 "<flowAccesses>" "$new_file" | grep "<flow>" | sed 's/.*<flow>\(.*\)<\/flow>.*/\1/' | sort)
+
+    while IFS= read -r flow_name; do
+        if [ -n "$flow_name" ]; then
+            local new_flow_block=$(sed -n "/<flowAccesses>/,/<\/flowAccesses>/p" "$new_file" | sed -n "/<flow>$flow_name<\/flow>/,/<\/flowAccesses>/p")
+            local old_flow_block=$(sed -n "/<flowAccesses>/,/<\/flowAccesses>/p" "$old_file" | sed -n "/<flow>$flow_name<\/flow>/,/<\/flowAccesses>/p")
+
+            if [ -z "$old_flow_block" ] || [ "$new_flow_block" != "$old_flow_block" ]; then
+                echo "         • $flow_name (changed/new)"
+                echo "    <flowAccesses>" >> "$output_file"
+                echo "$new_flow_block" | grep -v "<flowAccesses>" | grep -v "</flowAccesses>" >> "$output_file"
+                echo "    </flowAccesses>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_flows"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed custom setting access
+extract_changed_custom_setting_access() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking custom setting access..."
+
+    local new_settings=$(grep -A 2 "<customSettingAccesses>" "$new_file" | grep "<name>" | sed 's/.*<name>\(.*\)<\/name>.*/\1/' | sort)
+
+    while IFS= read -r setting_name; do
+        if [ -n "$setting_name" ]; then
+            local new_setting_block=$(sed -n "/<customSettingAccesses>/,/<\/customSettingAccesses>/p" "$new_file" | sed -n "/<name>$setting_name<\/name>/,/<\/customSettingAccesses>/p")
+            local old_setting_block=$(sed -n "/<customSettingAccesses>/,/<\/customSettingAccesses>/p" "$old_file" | sed -n "/<name>$setting_name<\/name>/,/<\/customSettingAccesses>/p")
+
+            if [ -z "$old_setting_block" ] || [ "$new_setting_block" != "$old_setting_block" ]; then
+                echo "         • $setting_name (changed/new)"
+                echo "    <customSettingAccesses>" >> "$output_file"
+                echo "$new_setting_block" | grep -v "<customSettingAccesses>" | grep -v "</customSettingAccesses>" >> "$output_file"
+                echo "    </customSettingAccesses>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_settings"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed login hours
+extract_changed_login_hours() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+
+    echo "      🔍 Checking login hours..."
+
+    local new_login_hours=$(grep -A 10 "<loginHours>" "$new_file" | sed -n '/<loginHours>/,/<\/loginHours>/p' | head -n -1 | tail -n +2)
+    local old_login_hours=$(grep -A 10 "<loginHours>" "$old_file" | sed -n '/<loginHours>/,/<\/loginHours>/p' | head -n -1 | tail -n +2)
+
+    if [ "$new_login_hours" != "$old_login_hours" ]; then
+        echo "         • Login hours settings changed"
+        echo "    <loginHours>" >> "$output_file"
+        echo "$new_login_hours" >> "$output_file"
+        echo "    </loginHours>" >> "$output_file"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed login IP ranges
+extract_changed_login_ip_ranges() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking login IP ranges..."
+
+    local new_ip_ranges=$(grep -A 3 "<loginIpRanges>" "$new_file" | grep "<startAddress>" | sed 's/.*<startAddress>\(.*\)<\/startAddress>.*/\1/' | sort)
+
+    while IFS= read -r ip_start; do
+        if [ -n "$ip_start" ]; then
+            local new_ip_block=$(sed -n "/<loginIpRanges>/,/<\/loginIpRanges>/p" "$new_file" | sed -n "/<startAddress>$ip_start<\/startAddress>/,/<\/loginIpRanges>/p")
+            local old_ip_block=$(sed -n "/<loginIpRanges>/,/<\/loginIpRanges>/p" "$old_file" | sed -n "/<startAddress>$ip_start<\/startAddress>/,/<\/loginIpRanges>/p")
+
+            if [ -z "$old_ip_block" ] || [ "$new_ip_block" != "$old_ip_block" ]; then
+                echo "         • IP range starting with $ip_start (changed/new)"
+                echo "    <loginIpRanges>" >> "$output_file"
+                echo "$new_ip_block" | grep -v "<loginIpRanges>" | grep -v "</loginIpRanges>" >> "$output_file"
+                echo "    </loginIpRanges>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_ip_ranges"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed session timeout
+extract_changed_session_timeout() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+
+    echo "      🔍 Checking session timeout..."
+
+    local new_session_timeout=$(grep "<sessionTimeout>" "$new_file" | sed 's/.*<sessionTimeout>\(.*\)<\/sessionTimeout>.*/\1/')
+    local old_session_timeout=$(grep "<sessionTimeout>" "$old_file" | sed 's/.*<sessionTimeout>\(.*\)<\/sessionTimeout>.*/\1/')
+
+    if [ "$new_session_timeout" != "$old_session_timeout" ]; then
+        echo "         • Session timeout changed from $old_session_timeout to $new_session_timeout"
+        echo "    <sessionTimeout>$new_session_timeout</sessionTimeout>" >> "$output_file"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract changed external data source access
+extract_changed_external_data_source_access() {
+    local old_file="$1"
+    local new_file="$2"
+    local output_file="$3"
+    local has_changes=false
+
+    echo "      🔍 Checking external data source access..."
+
+    local new_data_sources=$(grep -A 2 "<externalDataSourceAccesses>" "$new_file" | grep "<externalDataSource>" | sed 's/.*<externalDataSource>\(.*\)<\/externalDataSource>.*/\1/' | sort)
+
+    while IFS= read -r ds_name; do
+        if [ -n "$ds_name" ]; then
+            local new_ds_block=$(sed -n "/<externalDataSourceAccesses>/,/<\/externalDataSourceAccesses>/p" "$new_file" | sed -n "/<externalDataSource>$ds_name<\/externalDataSource>/,/<\/externalDataSourceAccesses>/p")
+            local old_ds_block=$(sed -n "/<externalDataSourceAccesses>/,/<\/externalDataSourceAccesses>/p" "$old_file" | sed -n "/<externalDataSource>$ds_name<\/externalDataSource>/,/<\/externalDataSourceAccesses>/p")
+
+            if [ -z "$old_ds_block" ] || [ "$new_ds_block" != "$old_ds_block" ]; then
+                echo "         • $ds_name (changed/new)"
+                echo "    <externalDataSourceAccesses>" >> "$output_file"
+                echo "$new_ds_block" | grep -v "<externalDataSourceAccesses>" | grep -v "</externalDataSourceAccesses>" >> "$output_file"
+                echo "    </externalDataSourceAccesses>" >> "$output_file"
+                has_changes=true
+            fi
+        fi
+    done <<< "$new_data_sources"
+
+    if [ "$has_changes" = true ]; then
+        return 0
+    else
+        return 1
+    fi
 }

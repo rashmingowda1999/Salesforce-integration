@@ -40,10 +40,32 @@ show_profile_deployment_summary() {
                 local field_perms=$(grep -c "<fieldPermissions>" "$profile_file" 2>/dev/null || echo 0)
                 local object_perms=$(grep -c "<objectPermissions>" "$profile_file" 2>/dev/null || echo 0)
                 local user_perms=$(grep -c "<userPermissions>" "$profile_file" 2>/dev/null || echo 0)
+                local class_access=$(grep -c "<classAccesses>" "$profile_file" 2>/dev/null || echo 0)
+                local app_vis=$(grep -c "<applicationVisibilities>" "$profile_file" 2>/dev/null || echo 0)
+                local tab_vis=$(grep -c "<tabVisibilities>" "$profile_file" 2>/dev/null || echo 0)
+                local record_type_vis=$(grep -c "<recordTypeVisibilities>" "$profile_file" 2>/dev/null || echo 0)
+                local page_access=$(grep -c "<pageAccesses>" "$profile_file" 2>/dev/null || echo 0)
+                local flow_access=$(grep -c "<flowAccesses>" "$profile_file" 2>/dev/null || echo 0)
+                local custom_setting=$(grep -c "<customSettingAccesses>" "$profile_file" 2>/dev/null || echo 0)
+                local login_hours=$(grep -c "<loginHours>" "$profile_file" 2>/dev/null || echo 0)
+                local login_ip=$(grep -c "<loginIpRanges>" "$profile_file" 2>/dev/null || echo 0)
+                local session_timeout=$(grep -c "<sessionTimeout>" "$profile_file" 2>/dev/null || echo 0)
+                local ext_data_source=$(grep -c "<externalDataSourceAccesses>" "$profile_file" 2>/dev/null || echo 0)
 
                 echo "   • Field permissions: $field_perms"
                 echo "   • Object permissions: $object_perms"
                 echo "   • User permissions: $user_perms"
+                echo "   • Apex class access: $class_access"
+                echo "   • App visibilities: $app_vis"
+                echo "   • Tab visibilities: $tab_vis"
+                echo "   • Record Type visibilities: $record_type_vis"
+                echo "   • Visualforce page access: $page_access"
+                echo "   • Flow access: $flow_access"
+                echo "   • Custom setting access: $custom_setting"
+                echo "   • Login hours: $login_hours"
+                echo "   • Login IP ranges: $login_ip"
+                echo "   • Session timeout: $session_timeout"
+                echo "   • External data source access: $ext_data_source"
 
                 field_permission_total=$((field_permission_total + field_perms))
                 object_permission_total=$((object_permission_total + object_perms))
