@@ -156,7 +156,7 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
             # Check for Read without Edit conflicts (Edit=true but Read=false)
             if grep -q "<fieldPermissions>" "$PROFILE_FILE"; then
                 # Extract field permission blocks and check for logical conflicts
-                local field_conflicts=$(grep -A 3 "<fieldPermissions>" "$PROFILE_FILE" | grep -B 3 -A 3 "<editable>true</editable>" | grep -B 6 "<readable>false</readable>" || true)
+                field_conflicts=$(grep -A 3 "<fieldPermissions>" "$PROFILE_FILE" | grep -B 3 -A 3 "<editable>true</editable>" | grep -B 6 "<readable>false</readable>" || true)
 
                 if [ -n "$field_conflicts" ]; then
                     add_error "Field permission conflict in $PROFILE_NAME: editable=true but readable=false"
@@ -166,8 +166,8 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
             # Check for conflicting user permissions
             if grep -q "<userPermissions>" "$PROFILE_FILE"; then
                 # Look for potentially conflicting admin vs limited user permissions
-                local has_modify_all=$(grep -A 2 "<userPermissions>" "$PROFILE_FILE" | grep -B 2 "<name>ModifyAllData</name>" | grep "<enabled>true</enabled>" || true)
-                local has_view_all=$(grep -A 2 "<userPermissions>" "$PROFILE_FILE" | grep -B 2 "<name>ViewAllData</name>" | grep "<enabled>true</enabled>" || true)
+                has_modify_all=$(grep -A 2 "<userPermissions>" "$PROFILE_FILE" | grep -B 2 "<name>ModifyAllData</name>" | grep "<enabled>true</enabled>" || true)
+                has_view_all=$(grep -A 2 "<userPermissions>" "$PROFILE_FILE" | grep -B 2 "<name>ViewAllData</name>" | grep "<enabled>true</enabled>" || true)
 
                 if [ -n "$has_modify_all" ]; then
                     add_warning "Profile $PROFILE_NAME has ModifyAllData permission (high privilege)"
