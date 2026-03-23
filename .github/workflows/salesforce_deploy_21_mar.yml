@@ -182,20 +182,20 @@ jobs:
                           echo "   📊 Type: Selective delta deployment"
 
                           # Show what's in the delta
-                          FIELD_COUNT=$(grep -c "<fieldPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          OBJECT_COUNT=$(grep -c "<objectPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          APEX_COUNT=$(grep -c "<classAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          USER_PERM_COUNT=$(grep -c "<userPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          APP_VIS_COUNT=$(grep -c "<applicationVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          TAB_VIS_COUNT=$(grep -c "<tabVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          RECORD_TYPE_COUNT=$(grep -c "<recordTypeVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          PAGE_ACCESS_COUNT=$(grep -c "<pageAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          FLOW_ACCESS_COUNT=$(grep -c "<flowAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          CUSTOM_SETTING_COUNT=$(grep -c "<customSettingAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          LOGIN_HOURS_COUNT=$(grep -c "<loginHours>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          LOGIN_IP_COUNT=$(grep -c "<loginIpRanges>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          SESSION_TIMEOUT_COUNT=$(grep -c "<sessionTimeout>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
-                          EXT_DATA_SOURCE_COUNT=$(grep -c "<externalDataSourceAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          FIELD_COUNT=$(grep -c "<fieldPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          OBJECT_COUNT=$(grep -c "<objectPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          APEX_COUNT=$(grep -c "<classAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          USER_PERM_COUNT=$(grep -c "<userPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          APP_VIS_COUNT=$(grep -c "<applicationVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          TAB_VIS_COUNT=$(grep -c "<tabVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          RECORD_TYPE_COUNT=$(grep -c "<recordTypeVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          PAGE_ACCESS_COUNT=$(grep -c "<pageAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          FLOW_ACCESS_COUNT=$(grep -c "<flowAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          CUSTOM_SETTING_COUNT=$(grep -c "<customSettingAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          LOGIN_HOURS_COUNT=$(grep -c "<loginHours>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          LOGIN_IP_COUNT=$(grep -c "<loginIpRanges>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          SESSION_TIMEOUT_COUNT=$(grep -c "<sessionTimeout>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+                          EXT_DATA_SOURCE_COUNT=$(grep -c "<externalDataSourceAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
 
                           echo "   📈 Permission Changes:"
                           echo "      • Field permissions: $FIELD_COUNT"
@@ -213,8 +213,8 @@ jobs:
                           echo "      • Session timeout: $SESSION_TIMEOUT_COUNT"
                           echo "      • External data source access: $EXT_DATA_SOURCE_COUNT"
 
-                          # Calculate total changes
-                          TOTAL_CHANGES=$((FIELD_COUNT + OBJECT_COUNT + APEX_COUNT + USER_PERM_COUNT + APP_VIS_COUNT + TAB_VIS_COUNT + RECORD_TYPE_COUNT + PAGE_ACCESS_COUNT + FLOW_ACCESS_COUNT + CUSTOM_SETTING_COUNT + LOGIN_HOURS_COUNT + LOGIN_IP_COUNT + SESSION_TIMEOUT_COUNT + EXT_DATA_SOURCE_COUNT))
+                          # Calculate total changes (ensure all variables are integers)
+                          TOTAL_CHANGES=$(( ${FIELD_COUNT:-0} + ${OBJECT_COUNT:-0} + ${APEX_COUNT:-0} + ${USER_PERM_COUNT:-0} + ${APP_VIS_COUNT:-0} + ${TAB_VIS_COUNT:-0} + ${RECORD_TYPE_COUNT:-0} + ${PAGE_ACCESS_COUNT:-0} + ${FLOW_ACCESS_COUNT:-0} + ${CUSTOM_SETTING_COUNT:-0} + ${LOGIN_HOURS_COUNT:-0} + ${LOGIN_IP_COUNT:-0} + ${SESSION_TIMEOUT_COUNT:-0} + ${EXT_DATA_SOURCE_COUNT:-0} ))
                           echo "   🎯 Total elements changed: $TOTAL_CHANGES"
                         elif [ -f "$profile_dir/${PROFILE_NAME}.profile-meta.xml" ]; then
                           PROFILE_FILE="${PROFILE_NAME}.profile-meta.xml"
