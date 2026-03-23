@@ -231,21 +231,21 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
             add_error "Profile $PROFILE_NAME missing closing Profile tag"
         fi
 
-        # Count permission types in the profile
-        FIELD_PERMS=$(grep -c "<fieldPermissions>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        OBJECT_PERMS=$(grep -c "<objectPermissions>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        USER_PERMS=$(grep -c "<userPermissions>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        CLASS_ACCESS=$(grep -c "<classAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        APP_VIS=$(grep -c "<applicationVisibilities>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        TAB_VIS=$(grep -c "<tabVisibilities>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        RECORD_TYPE_VIS=$(grep -c "<recordTypeVisibilities>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        PAGE_ACCESS=$(grep -c "<pageAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        FLOW_ACCESS=$(grep -c "<flowAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        CUSTOM_SETTING_ACCESS=$(grep -c "<customSettingAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        LOGIN_HOURS=$(grep -c "<loginHours>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        LOGIN_IP_RANGES=$(grep -c "<loginIpRanges>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        SESSION_TIMEOUT=$(grep -c "<sessionTimeout>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-        EXT_DATA_SOURCE=$(grep -c "<externalDataSourceAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
+        # Count permission types in the profile (clean variables)
+        FIELD_PERMS=$(grep -c "<fieldPermissions>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        OBJECT_PERMS=$(grep -c "<objectPermissions>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        USER_PERMS=$(grep -c "<userPermissions>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        CLASS_ACCESS=$(grep -c "<classAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        APP_VIS=$(grep -c "<applicationVisibilities>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        TAB_VIS=$(grep -c "<tabVisibilities>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        RECORD_TYPE_VIS=$(grep -c "<recordTypeVisibilities>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        PAGE_ACCESS=$(grep -c "<pageAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        FLOW_ACCESS=$(grep -c "<flowAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        CUSTOM_SETTING_ACCESS=$(grep -c "<customSettingAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        LOGIN_HOURS=$(grep -c "<loginHours>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        LOGIN_IP_RANGES=$(grep -c "<loginIpRanges>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        SESSION_TIMEOUT=$(grep -c "<sessionTimeout>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+        EXT_DATA_SOURCE=$(grep -c "<externalDataSourceAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
 
         echo "      📈 Permission summary:"
         echo "         • Field permissions: $FIELD_PERMS"
@@ -263,11 +263,11 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
         echo "         • Session timeout: $SESSION_TIMEOUT"
         echo "         • External data source access: $EXT_DATA_SOURCE"
 
-        # Calculate total permissions
-        TOTAL_PERMISSIONS=$((FIELD_PERMS + OBJECT_PERMS + USER_PERMS + CLASS_ACCESS + APP_VIS + TAB_VIS + RECORD_TYPE_VIS + PAGE_ACCESS + FLOW_ACCESS + CUSTOM_SETTING_ACCESS + LOGIN_HOURS + LOGIN_IP_RANGES + SESSION_TIMEOUT + EXT_DATA_SOURCE))
+        # Calculate total permissions (with robust parameter expansion)
+        TOTAL_PERMISSIONS=$(( ${FIELD_PERMS:-0} + ${OBJECT_PERMS:-0} + ${USER_PERMS:-0} + ${CLASS_ACCESS:-0} + ${APP_VIS:-0} + ${TAB_VIS:-0} + ${RECORD_TYPE_VIS:-0} + ${PAGE_ACCESS:-0} + ${FLOW_ACCESS:-0} + ${CUSTOM_SETTING_ACCESS:-0} + ${LOGIN_HOURS:-0} + ${LOGIN_IP_RANGES:-0} + ${SESSION_TIMEOUT:-0} + ${EXT_DATA_SOURCE:-0} ))
         echo "         📊 Total profile elements: $TOTAL_PERMISSIONS"
 
-        if [ "$TOTAL_PERMISSIONS" -eq 0 ]; then
+        if [ "${TOTAL_PERMISSIONS:-0}" -eq 0 ]; then
             add_error "Profile $PROFILE_NAME appears to be empty (no permissions found)"
         fi
     fi
@@ -279,7 +279,7 @@ echo ""
 echo "📊 Check 4: Impact Analysis"
 echo "   Analyzing potential impact of profile changes..."
 
-TOTAL_PROFILES=$(find "$DELTA_DIR/profile-deltas" -maxdepth 1 -type d | grep -v "/profile-deltas$" | wc -l)
+TOTAL_PROFILES=$(find "$DELTA_DIR/profile-deltas" -maxdepth 1 -type d | grep -v "/profile-deltas$" | wc -l | tr -d '\n\r')
 echo "   📋 Total profiles being modified: $TOTAL_PROFILES"
 
 for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
@@ -297,11 +297,11 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
         if [ -n "$PROFILE_FILE" ]; then
             echo "   🎯 Impact analysis for: $PROFILE_NAME"
 
-            # Analyze permission grants vs restrictions
-            ENABLED_PERMS=$(grep -c "<enabled>true</enabled>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            DISABLED_PERMS=$(grep -c "<enabled>false</enabled>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            READABLE_FIELDS=$(grep -c "<readable>true</readable>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            EDITABLE_FIELDS=$(grep -c "<editable>true</editable>" "$PROFILE_FILE" 2>/dev/null || echo 0)
+            # Analyze permission grants vs restrictions (clean variables)
+            ENABLED_PERMS=$(grep -c "<enabled>true</enabled>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            DISABLED_PERMS=$(grep -c "<enabled>false</enabled>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            READABLE_FIELDS=$(grep -c "<readable>true</readable>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            EDITABLE_FIELDS=$(grep -c "<editable>true</editable>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
 
             echo "      📊 Permission changes:"
             echo "         • Enabled permissions: $ENABLED_PERMS"
@@ -309,11 +309,11 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
             echo "         • Readable fields: $READABLE_FIELDS"
             echo "         • Editable fields: $EDITABLE_FIELDS"
 
-            if [ "$DISABLED_PERMS" -gt 0 ]; then
+            if [ "${DISABLED_PERMS:-0}" -gt 0 ]; then
                 add_warning "Profile $PROFILE_NAME removes/restricts $DISABLED_PERMS permissions (may impact users)"
             fi
 
-            if [ "$ENABLED_PERMS" -gt 0 ]; then
+            if [ "${ENABLED_PERMS:-0}" -gt 0 ]; then
                 add_success "Profile $PROFILE_NAME grants $ENABLED_PERMS new permissions"
             fi
 
@@ -330,36 +330,36 @@ for profile_dir in "$DELTA_DIR/profile-deltas"/*; do
                 add_warning "High-impact change: ManageUsers permission modified in $PROFILE_NAME"
             fi
 
-            # Check for specific high-impact changes with new elements
-            RECORD_TYPE_CHANGES=$(grep -c "<recordTypeVisibilities>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            VF_PAGE_CHANGES=$(grep -c "<pageAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            FLOW_CHANGES=$(grep -c "<flowAccesses>" "$PROFILE_FILE" 2>/dev/null || echo 0)
-            LOGIN_SETTING_CHANGES=$(grep -c "<loginHours>\|<loginIpRanges>\|<sessionTimeout>" "$PROFILE_FILE" 2>/dev/null || echo 0)
+            # Check for specific high-impact changes with new elements (clean variables)
+            RECORD_TYPE_CHANGES=$(grep -c "<recordTypeVisibilities>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            VF_PAGE_CHANGES=$(grep -c "<pageAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            FLOW_CHANGES=$(grep -c "<flowAccesses>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
+            LOGIN_SETTING_CHANGES=$(grep -c "<loginHours>\|<loginIpRanges>\|<sessionTimeout>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
 
-            if [ "$RECORD_TYPE_CHANGES" -gt 0 ]; then
+            if [ "${RECORD_TYPE_CHANGES:-0}" -gt 0 ]; then
                 add_success "Profile $PROFILE_NAME includes $RECORD_TYPE_CHANGES record type visibility changes"
             fi
 
-            if [ "$VF_PAGE_CHANGES" -gt 0 ]; then
+            if [ "${VF_PAGE_CHANGES:-0}" -gt 0 ]; then
                 add_success "Profile $PROFILE_NAME includes $VF_PAGE_CHANGES Visualforce page access changes"
             fi
 
-            if [ "$FLOW_CHANGES" -gt 0 ]; then
+            if [ "${FLOW_CHANGES:-0}" -gt 0 ]; then
                 add_success "Profile $PROFILE_NAME includes $FLOW_CHANGES Flow access changes"
             fi
 
-            if [ "$LOGIN_SETTING_CHANGES" -gt 0 ]; then
+            if [ "${LOGIN_SETTING_CHANGES:-0}" -gt 0 ]; then
                 add_warning "High-impact change: Login/Session settings modified in $PROFILE_NAME (security implications)"
             fi
 
             # Check for potentially restrictive changes
             if grep -q "<visible>false</visible>" "$PROFILE_FILE"; then
-                HIDDEN_ELEMENTS=$(grep -c "<visible>false</visible>" "$PROFILE_FILE" 2>/dev/null || echo 0)
+                HIDDEN_ELEMENTS=$(grep -c "<visible>false</visible>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
                 add_warning "Profile $PROFILE_NAME hides $HIDDEN_ELEMENTS elements from users"
             fi
 
             if grep -q "<enabled>false</enabled>" "$PROFILE_FILE"; then
-                DISABLED_ACCESS=$(grep -c "<enabled>false</enabled>" "$PROFILE_FILE" 2>/dev/null || echo 0)
+                DISABLED_ACCESS=$(grep -c "<enabled>false</enabled>" "$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
                 add_warning "Profile $PROFILE_NAME disables access to $DISABLED_ACCESS elements"
             fi
         fi
