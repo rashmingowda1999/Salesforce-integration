@@ -126,33 +126,113 @@ extract_changed_field_permissions() {
 
     echo "      🔍 Checking field permissions..."
 
-    # Get all field permissions from new file
-    # Use a more robust XML parsing approach
-    local new_fields=$(grep -A 3 "<fieldPermissions>" "$new_file" | grep "<field>" | sed 's/.*<field>\(.*\)<\/field>.*/\1/' | sort)
-    local old_fields=$(grep -A 3 "<fieldPermissions>" "$old_file" | grep "<field>" | sed 's/.*<field>\(.*\)<\/field>.*/\1/' | sort)
+    # Create temporary files to store individual field permission blocks
+    local temp_new_fields="/tmp/new_fields_$$.txt"
+    local temp_old_fields="/tmp/old_fields_$$.txt"
 
-    # Compare field permissions
-    while IFS= read -r field_name; do
-        if [ -n "$field_name" ]; then
-            # Extract the complete fieldPermissions block for this field from new file
-            local new_field_block=$(sed -n "/<fieldPermissions>/,/<\/fieldPermissions>/p" "$new_file" | sed -n "/<field>$field_name<\/field>/,/<\/fieldPermissions>/p")
-            local old_field_block=$(sed -n "/<fieldPermissions>/,/<\/fieldPermissions>/p" "$old_file" | sed -n "/<field>$field_name<\/field>/,/<\/fieldPermissions>/p")
+    # Extract all field permission blocks from new file with field names as identifiers
+    awk '
+    /<fieldPermissions>/ { in_field=1; block=""; }
+    in_field { block = block $0 "\n"; }
+    /<\/fieldPermissions>/ {
+        if (in_field) {
+            # Extract field name from block
+            if (match(block, /<field>([^<]*)<\/field>/, arr)) {
+                field_name = arr[1];
+                # Escape newlines so the entire block is on one line
+                gsub(/\n/, "\\n", block);
+                print field_name "|||" block;
+            }
+            in_field=0;
+        }
+    }
+    ' "$new_file" > "$temp_new_fields"
 
-            # Check if this field permission is new or changed
-            if [ -z "$old_field_block" ] || [ "$new_field_block" != "$old_field_block" ]; then
-                echo "         • $field_name (changed/new)"
-                # Add the complete fieldPermissions block
-                echo "    <fieldPermissions>" >> "$output_file"
-                echo "$new_field_block" | grep -v "<fieldPermissions>" | grep -v "</fieldPermissions>" >> "$output_file"
-                echo "    </fieldPermissions>" >> "$output_file"
+    # Extract all field permission blocks from old file with field names as identifiers
+    awk '
+    /<fieldPermissions>/ { in_field=1; block=""; }
+    in_field { block = block $0 "\n"; }
+    /<\/fieldPermissions>/ {
+        if (in_field) {
+            # Extract field name from block
+            if (match(block, /<field>([^<]*)<\/field>/, arr)) {
+                field_name = arr[1];
+                # Escape newlines so the entire block is on one line
+                gsub(/\n/, "\\n", block);
+                print field_name "|||" block;
+            }
+            in_field=0;
+        }
+    }
+    ' "$old_file" > "$temp_old_fields"
+
+    # Compare each field permission block
+    while IFS='|||' read -r field_name new_block; do
+        if [ -n "$field_name" ] && [ -n "$new_block" ]; then
+            # Find corresponding block in old file using a different approach
+            old_line=$(grep "^${field_name}|||" "$temp_old_fields")
+            old_block="${old_line#*|||}"  # Remove everything up to and including first |||
+
+            if [ -z "$old_block" ]; then
+                # New field permission (didn't exist before)
+                echo "         • $field_name (NEW field permission)"
+                # Unescape newlines before writing to output
+                echo "$new_block" | sed 's/\\n/\n/g' >> "$output_file"
                 has_changes=true
+            else
+                # Compare the blocks (normalize whitespace but preserve structure for comparison)
+                new_normalized=$(echo "$new_block" | sed 's/\\n//g' | sed 's/[[:space:]]*//g')
+                old_normalized=$(echo "$old_block" | sed 's/\\n//g' | sed 's/[[:space:]]*//g')
+
+                if [ "$new_normalized" != "$old_normalized" ]; then
+                    echo "         • $field_name (CHANGED permission)"
+
+                    # Show what changed for debugging (unescape for parsing)
+                    old_unescaped=$(echo "$old_block" | sed 's/\\n/\n/g')
+                    new_unescaped=$(echo "$new_block" | sed 's/\\n/\n/g')
+
+                    old_editable=$(echo "$old_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
+                    new_editable=$(echo "$new_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
+                    old_readable=$(echo "$old_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
+                    new_readable=$(echo "$new_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
+
+                    if [ "$old_editable" != "$new_editable" ]; then
+                        echo "           └── Editable: $old_editable → $new_editable"
+                    fi
+                    if [ "$old_readable" != "$new_readable" ]; then
+                        echo "           └── Readable: $old_readable → $new_readable"
+                    fi
+
+                    # Unescape newlines before writing to output
+                    echo "$new_block" | sed 's/\\n/\n/g' >> "$output_file"
+                    has_changes=true
+                else
+                    echo "         • $field_name (UNCHANGED - skipping)"
+                fi
             fi
         fi
-    done <<< "$new_fields"
+    done < "$temp_new_fields"
+
+    # Check for deleted field permissions
+    while IFS='|||' read -r field_name old_block; do
+        if [ -n "$field_name" ] && [ -n "$old_block" ]; then
+            # Check if this field exists in new file
+            if ! grep -q "^${field_name}|||" "$temp_new_fields"; then
+                echo "         • $field_name (REMOVED field permission)"
+                # Note: For removed permissions, we would need to handle this via destructive changes
+                # For now, just log it
+            fi
+        fi
+    done < "$temp_old_fields"
+
+    # Clean up temporary files
+    rm -f "$temp_new_fields" "$temp_old_fields"
 
     if [ "$has_changes" = true ]; then
+        echo "      ✅ Only changed field permissions included in delta"
         return 0
     else
+        echo "      📋 No field permission changes detected"
         return 1
     fi
 }
