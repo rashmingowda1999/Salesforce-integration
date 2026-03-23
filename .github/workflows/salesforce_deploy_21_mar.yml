@@ -91,6 +91,53 @@ jobs:
                   echo "📋 [INFO] No pre-destructive changes detected"
                 fi
 
+          - name: 'Process profile changes (Flosum-style selective deployment)'
+            run: |
+                echo "🎯 Processing profile changes with selective deployment..."
+
+                # Make the profile delta handler executable
+                chmod +x scripts/ci/profile_delta_handler.sh
+
+                # Run profile delta processing
+                scripts/ci/profile_delta_handler.sh "${{ env.DELTA_DIR }}" "HEAD~1" "HEAD"
+
+                # Check if we have profile changes to process
+                if [ -f "${{ env.DELTA_DIR }}/profile-deltas/has_profile_changes.flag" ]; then
+                  HAS_PROFILE_CHANGES=$(cat "${{ env.DELTA_DIR }}/profile-deltas/has_profile_changes.flag")
+
+                  if [ "$HAS_PROFILE_CHANGES" = "true" ]; then
+                    echo ""
+                    echo "📊 Profile Delta Summary:"
+                    echo "   • Profile changes detected and processed"
+                    echo "   • Selective deployment packages created"
+                    echo "   • Delta packages in: ${{ env.DELTA_DIR }}/profile-deltas/"
+
+                    # Show profile delta packages
+                    echo ""
+                    echo "📦 Profile Delta Packages:"
+                    find "${{ env.DELTA_DIR }}/profile-deltas" -name "*.xml" -type f | head -10 | sed 's/^/   • /'
+
+                    # Set flag for later deployment steps
+                    echo "true" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                  else
+                    echo "✅ No profile changes detected"
+                    echo "false" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                  fi
+                else
+                  echo "✅ No profile processing needed"
+                  echo "false" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                fi
+
+          - name: 'Validate profile changes (Enhanced Flosum-style validation)'
+            run: |
+                echo "🔍 Running enhanced profile validation..."
+
+                # Make the profile validation script executable
+                chmod +x scripts/ci/profile_validation.sh
+
+                # Run enhanced profile validation
+                scripts/ci/profile_validation.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}"
+
           - name: 'Pre-destructive changes validation'
             run: |
                 # Make the script executable and run pre-destructive validation
@@ -101,6 +148,101 @@ jobs:
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+
+          - name: 'Deploy selective profile changes (Flosum-style)'
+            run: |
+                # Check if we have profile deltas to deploy
+                PROFILE_DEPLOYMENT_SUCCESS=true
+                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ]; then
+                  HAS_PROFILE_DELTAS=$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")
+
+                  if [ "$HAS_PROFILE_DELTAS" = "true" ]; then
+                    echo "🎯 Deploying selective profile changes..."
+                    echo "   📦 Profile deployment follows Flosum-style delta approach"
+                    echo "   🚀 Deploying only changed profile elements"
+                    echo ""
+
+                    # Deploy each profile delta package
+                    PROFILE_DEPLOYMENT_COUNT=0
+                    for profile_dir in "${{ env.DELTA_DIR }}/profile-deltas"/*; do
+                      if [ -d "$profile_dir" ] && [ "$(basename "$profile_dir")" != "profile-deltas" ]; then
+                        PROFILE_NAME=$(basename "$profile_dir")
+
+                        # Skip if this is just a flag file
+                        if [ "$PROFILE_NAME" = "has_profile_changes.flag" ]; then
+                          continue
+                        fi
+
+                        echo "📋 Deploying profile: $PROFILE_NAME"
+
+                        # Find the profile file (delta or full)
+                        PROFILE_FILE=""
+                        if [ -f "$profile_dir/${PROFILE_NAME}-delta.profile-meta.xml" ]; then
+                          PROFILE_FILE="${PROFILE_NAME}-delta.profile-meta.xml"
+                          echo "   📊 Type: Selective delta deployment"
+
+                          # Show what's in the delta
+                          FIELD_COUNT=$(grep -c "<fieldPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          OBJECT_COUNT=$(grep -c "<objectPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          APEX_COUNT=$(grep -c "<classAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null || echo 0)
+                          echo "   📈 Changes: $FIELD_COUNT field permissions, $OBJECT_COUNT object permissions, $APEX_COUNT Apex classes"
+                        elif [ -f "$profile_dir/${PROFILE_NAME}.profile-meta.xml" ]; then
+                          PROFILE_FILE="${PROFILE_NAME}.profile-meta.xml"
+                          echo "   📦 Type: Full profile deployment (new profile)"
+                        else
+                          echo "   ❌ No profile file found in $profile_dir"
+                          PROFILE_DEPLOYMENT_SUCCESS=false
+                          continue
+                        fi
+
+                        # Deploy this profile using its package.xml
+                        echo "   🚀 Deploying $PROFILE_FILE..."
+
+                        set +e  # Don't exit on error immediately
+                        PROFILE_DEPLOY_RESULT=$(sf project deploy start \
+                          --target-org "${{ env.TARGET_ORG_ALIAS }}" \
+                          --manifest "$profile_dir/package.xml" \
+                          --source-dir "$profile_dir" \
+                          --test-level NoTestRun \
+                          --json 2>&1)
+                        PROFILE_DEPLOY_EXIT_CODE=$?
+                        set -e  # Re-enable exit on error
+
+                        if [ $PROFILE_DEPLOY_EXIT_CODE -eq 0 ]; then
+                          # Extract deployment ID
+                          PROFILE_DEPLOY_ID=$(echo "$PROFILE_DEPLOY_RESULT" | jq -r '.result.id // "Unknown"' 2>/dev/null || echo "Unknown")
+                          echo "   ✅ Profile $PROFILE_NAME deployed successfully"
+                          echo "   📋 Deployment ID: $PROFILE_DEPLOY_ID"
+                          PROFILE_DEPLOYMENT_COUNT=$((PROFILE_DEPLOYMENT_COUNT + 1))
+                        else
+                          echo "   ❌ Profile $PROFILE_NAME deployment failed!"
+                          echo "   📋 Error details:"
+                          echo "$PROFILE_DEPLOY_RESULT" | head -20
+                          PROFILE_DEPLOYMENT_SUCCESS=false
+                        fi
+                        echo ""
+                      fi
+                    done
+
+                    if [ "$PROFILE_DEPLOYMENT_SUCCESS" = true ] && [ "$PROFILE_DEPLOYMENT_COUNT" -gt 0 ]; then
+                      echo "🎉 Selective profile deployment completed successfully!"
+                      echo "   📊 Profiles deployed: $PROFILE_DEPLOYMENT_COUNT"
+                      echo "   🎯 Deployment method: Flosum-style selective deployment"
+                      echo "   ⚡ Only changed elements were deployed (faster & safer)"
+                    elif [ "$PROFILE_DEPLOYMENT_COUNT" -eq 0 ]; then
+                      echo "⚠️  No profile packages found to deploy"
+                    else
+                      echo "❌ Some profile deployments failed!"
+                      echo "   🔧 Please review the errors above and fix profile issues"
+                      echo "   📋 This may block subsequent deployments if other metadata depends on these profiles"
+                      # Don't exit here - let the main deployment handle the overall flow
+                    fi
+                  else
+                    echo "📋 No selective profile changes to deploy"
+                  fi
+                else
+                  echo "📋 No profile deployment flags found - skipping selective profile deployment"
+                fi
 
           - name: 'Deploy to environment with destructive changes'
             run: |
@@ -136,6 +278,24 @@ jobs:
                 echo "   • Destructive changes: $HAS_DESTRUCTIVE"
                 echo "   • Pre-destructive changes: $HAS_PRE_DESTRUCTIVE"
                 echo "   • Post-destructive changes: $HAS_POST_DESTRUCTIVE"
+
+                # Show profile handling status
+                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ]; then
+                  HAS_PROFILE_DELTAS=$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")
+                  if [ "$HAS_PROFILE_DELTAS" = "true" ]; then
+                    echo "   🎯 Profile changes: Deployed separately using selective deployment"
+                  else
+                    echo "   📋 Profile changes: None detected"
+                  fi
+                else
+                  echo "   📋 Profile changes: None detected"
+                fi
+
+                echo ""
+                echo "💡 Note: Profile changes are now handled with Flosum-style selective deployment"
+                echo "   • Only changed profile elements are deployed (faster & safer)"
+                echo "   • Profiles deployed before other metadata to resolve dependencies"
+                echo "   • Main deployment below excludes profiles (already processed above)"
 
                 if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = false ] && [ "$HAS_PRE_DESTRUCTIVE" = false ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
                   echo "📋 No changes detected for deployment"
