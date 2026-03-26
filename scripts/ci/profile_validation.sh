@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Profile Validation Script - Flosum-style Enhanced Validation
+# Profile Validation Script - Enhanced Intelligent Validation
 # Usage: profile_validation.sh <delta_dir> <target_org>
 # This script provides comprehensive profile validation including:
 # 1. Dependency checking (field/object access validation)
@@ -19,7 +19,7 @@ if [ -z "$DELTA_DIR" ] || [ -z "$TARGET_ORG" ]; then
     exit 1
 fi
 
-echo "🔍 Enhanced Profile Validation (Flosum-style)"
+echo "🔍 Enhanced Profile Validation (Intelligent)"
 echo "Delta directory: $DELTA_DIR"
 echo "Target org: $TARGET_ORG"
 echo ""

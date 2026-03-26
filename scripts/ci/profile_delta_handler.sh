@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Profile Delta Handler - Flosum-style Selective Profile Deployment
+# Profile Delta Handler - Intelligent Selective Profile Deployment
 # Usage: profile_delta_handler.sh <delta_dir> <git_from> <git_to>
 # This script implements selective profile deployment by:
 # 1. Detecting profile changes
@@ -702,7 +702,7 @@ if [ -z "$DELTA_DIR" ] || [ -z "$GIT_FROM" ] || [ -z "$GIT_TO" ]; then
     exit 1
 fi
 
-echo "🔍 Profile Delta Handler - Flosum-style Selective Deployment"
+echo "🔍 Profile Delta Handler - Intelligent Selective Deployment"
 echo "Delta directory: $DELTA_DIR"
 echo "Git range: $GIT_FROM → $GIT_TO"
 echo ""

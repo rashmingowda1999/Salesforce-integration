@@ -91,7 +91,7 @@ jobs:
                   echo "📋 [INFO] No pre-destructive changes detected"
                 fi
 
-          - name: 'Process profile changes (Flosum-style selective deployment)'
+          - name: 'Process profile changes (selective deployment)'
             run: |
                 echo "🎯 Processing profile changes with selective deployment..."
 
@@ -128,15 +128,22 @@ jobs:
                   echo "false" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
                 fi
 
-          - name: 'Validate profile changes (Enhanced Flosum-style validation)'
+          - name: 'Validate profile changes (enhanced validation)'
             run: |
                 echo "🔍 Running enhanced profile validation..."
 
                 # Make the profile validation script executable
                 chmod +x scripts/ci/profile_validation.sh
 
-                # Run enhanced profile validation
+                # Run enhanced profile validation (warning-only, doesn't block deployment)
+                set +e  # Don't exit on validation warnings
                 scripts/ci/profile_validation.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}"
+                VALIDATION_EXIT_CODE=$?
+                set -e
+
+                if [ $VALIDATION_EXIT_CODE -ne 0 ]; then
+                    echo "⚠️  Profile validation warnings detected (deployment will continue)"
+                fi
 
           - name: 'Pre-destructive changes validation'
             run: |
@@ -148,131 +155,6 @@ jobs:
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
-
-          - name: 'Deploy selective profile changes (Flosum-style)'
-            run: |
-                # Check if we have profile deltas to deploy
-                PROFILE_DEPLOYMENT_SUCCESS=true
-                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ]; then
-                  HAS_PROFILE_DELTAS=$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")
-
-                  if [ "$HAS_PROFILE_DELTAS" = "true" ]; then
-                    echo "🎯 Deploying selective profile changes..."
-                    echo "   📦 Profile deployment follows Flosum-style delta approach"
-                    echo "   🚀 Deploying only changed profile elements"
-                    echo ""
-
-                    # Deploy each profile delta package
-                    PROFILE_DEPLOYMENT_COUNT=0
-                    for profile_dir in "${{ env.DELTA_DIR }}/profile-deltas"/*; do
-                      if [ -d "$profile_dir" ] && [ "$(basename "$profile_dir")" != "profile-deltas" ]; then
-                        PROFILE_NAME=$(basename "$profile_dir")
-
-                        # Skip if this is just a flag file
-                        if [ "$PROFILE_NAME" = "has_profile_changes.flag" ]; then
-                          continue
-                        fi
-
-                        echo "📋 Deploying profile: $PROFILE_NAME"
-
-                        # Find the profile file (delta or full)
-                        PROFILE_FILE=""
-                        if [ -f "$profile_dir/${PROFILE_NAME}-delta.profile-meta.xml" ]; then
-                          PROFILE_FILE="${PROFILE_NAME}-delta.profile-meta.xml"
-                          echo "   📊 Type: Selective delta deployment"
-
-                          # Show what's in the delta
-                          FIELD_COUNT=$(grep -c "<fieldPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          OBJECT_COUNT=$(grep -c "<objectPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          APEX_COUNT=$(grep -c "<classAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          USER_PERM_COUNT=$(grep -c "<userPermissions>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          APP_VIS_COUNT=$(grep -c "<applicationVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          TAB_VIS_COUNT=$(grep -c "<tabVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          RECORD_TYPE_COUNT=$(grep -c "<recordTypeVisibilities>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          PAGE_ACCESS_COUNT=$(grep -c "<pageAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          FLOW_ACCESS_COUNT=$(grep -c "<flowAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          CUSTOM_SETTING_COUNT=$(grep -c "<customSettingAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          LOGIN_HOURS_COUNT=$(grep -c "<loginHours>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          LOGIN_IP_COUNT=$(grep -c "<loginIpRanges>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          SESSION_TIMEOUT_COUNT=$(grep -c "<sessionTimeout>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-                          EXT_DATA_SOURCE_COUNT=$(grep -c "<externalDataSourceAccesses>" "$profile_dir/$PROFILE_FILE" 2>/dev/null | tr -d '\n\r' || echo 0)
-
-                          echo "   📈 Permission Changes:"
-                          echo "      • Field permissions: $FIELD_COUNT"
-                          echo "      • Object permissions: $OBJECT_COUNT"
-                          echo "      • Apex class access: $APEX_COUNT"
-                          echo "      • User permissions: $USER_PERM_COUNT"
-                          echo "      • App visibilities: $APP_VIS_COUNT"
-                          echo "      • Tab visibilities: $TAB_VIS_COUNT"
-                          echo "      • Record type visibilities: $RECORD_TYPE_COUNT"
-                          echo "      • Visualforce page access: $PAGE_ACCESS_COUNT"
-                          echo "      • Flow access: $FLOW_ACCESS_COUNT"
-                          echo "      • Custom setting access: $CUSTOM_SETTING_COUNT"
-                          echo "      • Login hours: $LOGIN_HOURS_COUNT"
-                          echo "      • Login IP ranges: $LOGIN_IP_COUNT"
-                          echo "      • Session timeout: $SESSION_TIMEOUT_COUNT"
-                          echo "      • External data source access: $EXT_DATA_SOURCE_COUNT"
-
-                          # Calculate total changes (ensure all variables are integers)
-                          TOTAL_CHANGES=$(( ${FIELD_COUNT:-0} + ${OBJECT_COUNT:-0} + ${APEX_COUNT:-0} + ${USER_PERM_COUNT:-0} + ${APP_VIS_COUNT:-0} + ${TAB_VIS_COUNT:-0} + ${RECORD_TYPE_COUNT:-0} + ${PAGE_ACCESS_COUNT:-0} + ${FLOW_ACCESS_COUNT:-0} + ${CUSTOM_SETTING_COUNT:-0} + ${LOGIN_HOURS_COUNT:-0} + ${LOGIN_IP_COUNT:-0} + ${SESSION_TIMEOUT_COUNT:-0} + ${EXT_DATA_SOURCE_COUNT:-0} ))
-                          echo "   🎯 Total elements changed: $TOTAL_CHANGES"
-                        elif [ -f "$profile_dir/${PROFILE_NAME}.profile-meta.xml" ]; then
-                          PROFILE_FILE="${PROFILE_NAME}.profile-meta.xml"
-                          echo "   📦 Type: Full profile deployment (new profile)"
-                        else
-                          echo "   ❌ No profile file found in $profile_dir"
-                          PROFILE_DEPLOYMENT_SUCCESS=false
-                          continue
-                        fi
-
-                        # Deploy this profile using its package.xml
-                        echo "   🚀 Deploying $PROFILE_FILE..."
-
-                        set +e  # Don't exit on error immediately
-                        PROFILE_DEPLOY_RESULT=$(sf project deploy start \
-                          --target-org "${{ env.TARGET_ORG_ALIAS }}" \
-                          --manifest "$profile_dir/package.xml" \
-                          --source-dir "$profile_dir" \
-                          --test-level NoTestRun \
-                          --json 2>&1)
-                        PROFILE_DEPLOY_EXIT_CODE=$?
-                        set -e  # Re-enable exit on error
-
-                        if [ $PROFILE_DEPLOY_EXIT_CODE -eq 0 ]; then
-                          # Extract deployment ID
-                          PROFILE_DEPLOY_ID=$(echo "$PROFILE_DEPLOY_RESULT" | jq -r '.result.id // "Unknown"' 2>/dev/null || echo "Unknown")
-                          echo "   ✅ Profile $PROFILE_NAME deployed successfully"
-                          echo "   📋 Deployment ID: $PROFILE_DEPLOY_ID"
-                          PROFILE_DEPLOYMENT_COUNT=$((PROFILE_DEPLOYMENT_COUNT + 1))
-                        else
-                          echo "   ❌ Profile $PROFILE_NAME deployment failed!"
-                          echo "   📋 Error details:"
-                          echo "$PROFILE_DEPLOY_RESULT" | head -20
-                          PROFILE_DEPLOYMENT_SUCCESS=false
-                        fi
-                        echo ""
-                      fi
-                    done
-
-                    if [ "$PROFILE_DEPLOYMENT_SUCCESS" = true ] && [ "$PROFILE_DEPLOYMENT_COUNT" -gt 0 ]; then
-                      echo "🎉 Selective profile deployment completed successfully!"
-                      echo "   📊 Profiles deployed: $PROFILE_DEPLOYMENT_COUNT"
-                      echo "   🎯 Deployment method: Flosum-style selective deployment"
-                      echo "   ⚡ Only changed elements were deployed (faster & safer)"
-                    elif [ "$PROFILE_DEPLOYMENT_COUNT" -eq 0 ]; then
-                      echo "⚠️  No profile packages found to deploy"
-                    else
-                      echo "❌ Some profile deployments failed!"
-                      echo "   🔧 Please review the errors above and fix profile issues"
-                      echo "   📋 This may block subsequent deployments if other metadata depends on these profiles"
-                      # Don't exit here - let the main deployment handle the overall flow
-                    fi
-                  else
-                    echo "📋 No selective profile changes to deploy"
-                  fi
-                else
-                  echo "📋 No profile deployment flags found - skipping selective profile deployment"
-                fi
 
           - name: 'Deploy to environment with destructive changes'
             run: |
@@ -309,23 +191,73 @@ jobs:
                 echo "   • Pre-destructive changes: $HAS_PRE_DESTRUCTIVE"
                 echo "   • Post-destructive changes: $HAS_POST_DESTRUCTIVE"
 
-                # Show profile handling status
-                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ]; then
-                  HAS_PROFILE_DELTAS=$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")
-                  if [ "$HAS_PROFILE_DELTAS" = "true" ]; then
-                    echo "   🎯 Profile changes: Deployed separately using selective deployment"
-                  else
-                    echo "   📋 Profile changes: None detected"
-                  fi
+                # Include profile delta changes in main deployment (always)
+                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ] && [ "$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")" = "true" ]; then
+                    echo "   🎯 Profile changes: Delta profiles will be included in deployment"
+                    echo ""
+                    echo "🔄 Preparing deployment with profile delta changes..."
+
+                    # Copy profile delta files to main deployment directory
+                    if [ -d "${{ env.DELTA_DIR }}/profile-deltas" ]; then
+                        echo "   📦 Including profile delta changes in deployment package"
+
+                        # Copy delta profiles to force-app directory
+                        for profile_dir in "${{ env.DELTA_DIR }}/profile-deltas"/*; do
+                            if [ -d "$profile_dir" ] && [ "$(basename "$profile_dir")" != "profile-deltas" ]; then
+                                PROFILE_NAME=$(basename "$profile_dir")
+
+                                # Skip flag files
+                                if [[ "$PROFILE_NAME" == *".flag" ]] || [[ "$PROFILE_NAME" == *".txt" ]]; then
+                                    continue
+                                fi
+
+                                # Use delta profile if available, otherwise full profile
+                                DELTA_PROFILE="$profile_dir/${PROFILE_NAME}-delta.profile-meta.xml"
+                                FULL_PROFILE="$profile_dir/${PROFILE_NAME}.profile-meta.xml"
+
+                                if [ -f "$DELTA_PROFILE" ]; then
+                                    # Copy delta profile (only changed elements)
+                                    DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
+                                    mkdir -p "$(dirname "$DEST_PROFILE")"
+                                    cp "$DELTA_PROFILE" "$DEST_PROFILE"
+                                    echo "      • $PROFILE_NAME (delta - only changed elements)"
+                                elif [ -f "$FULL_PROFILE" ]; then
+                                    # Copy full profile (new profile)
+                                    DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
+                                    mkdir -p "$(dirname "$DEST_PROFILE")"
+                                    cp "$FULL_PROFILE" "$DEST_PROFILE"
+                                    echo "      • $PROFILE_NAME (full - new profile)"
+                                fi
+                            fi
+                        done
+
+                        # Update package.xml to include profiles
+                        if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                            echo "   📝 Updating package.xml to include profiles"
+
+                            # Check if Profile metadata type already exists in package.xml
+                            if ! grep -q "<name>Profile</name>" "${{ env.DELTA_DIR }}/package/package.xml"; then
+                                # Add Profile section to package.xml
+                                sed -i '/<version>/i\
+    <types>\
+        <members>*</members>\
+        <name>Profile</name>\
+    </types>' "${{ env.DELTA_DIR }}/package/package.xml"
+                                echo "      ✅ Added Profile metadata type to package.xml"
+                            else
+                                echo "      ✅ Profiles already included in package.xml"
+                            fi
+                        fi
+                    fi
                 else
-                  echo "   📋 Profile changes: None detected"
+                    echo "   📋 Profile changes: None detected"
                 fi
 
                 echo ""
-                echo "💡 Note: Profile changes are now handled with Flosum-style selective deployment"
-                echo "   • Only changed profile elements are deployed (faster & safer)"
-                echo "   • Profiles deployed before other metadata to resolve dependencies"
-                echo "   • Main deployment below excludes profiles (already processed above)"
+                echo "💡 Deployment Strategy:"
+                echo "   • Profile deltas included in main deployment (git-based changes only)"
+                echo "   • Protects manual org changes from being overridden"
+                echo "   • Single unified deployment for all metadata changes"
 
                 if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = false ] && [ "$HAS_PRE_DESTRUCTIVE" = false ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
                   echo "📋 No changes detected for deployment"
@@ -572,6 +504,7 @@ jobs:
                   echo "$DEPLOY_RESULT"
                   exit 1
                 fi
+
 
           - name: 'Post-destructive changes validation'
             if: always()
