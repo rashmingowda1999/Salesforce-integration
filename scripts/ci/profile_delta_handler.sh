@@ -169,10 +169,8 @@ extract_changed_field_permissions() {
     # Compare each field permission block
     while IFS='|||' read -r field_name new_block; do
         if [ -n "$field_name" ] && [ -n "$new_block" ]; then
-            # Escape special regex characters in field name for proper matching
-            escaped_field=$(echo "$field_name" | sed 's/[.[\*^$()+?{|]/\\&/g')
-            # Find corresponding block in old file
-            old_line=$(grep "^${escaped_field}|||" "$temp_old_fields" 2>/dev/null || true)
+            # Use grep -F for literal string matching (no regex interpretation)
+            old_line=$(grep -F "${field_name}|||" "$temp_old_fields" | head -1)
             old_block="${old_line#*|||}"  # Remove everything up to and including first |||
 
             if [ -z "$old_block" ]; then
@@ -218,10 +216,10 @@ extract_changed_field_permissions() {
     # Check for deleted field permissions
     while IFS='|||' read -r field_name old_block; do
         if [ -n "$field_name" ] && [ -n "$old_block" ]; then
-            # Escape special regex characters in field name for proper matching
-            escaped_field=$(echo "$field_name" | sed 's/[.[\*^$()+?{|]/\\&/g')
+            # Use grep -F for literal string matching (no regex interpretation)
+            new_line=$(grep -F "${field_name}|||" "$temp_new_fields" | head -1)
             # Check if this field exists in new file
-            if ! grep -q "^${escaped_field}|||" "$temp_new_fields"; then
+            if [ -z "$new_line" ]; then
                 echo "         • $field_name (REMOVED field permission)"
                 # Note: For removed permissions, we would need to handle this via destructive changes
                 # For now, just log it
