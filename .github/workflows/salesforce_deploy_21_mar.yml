@@ -310,7 +310,7 @@ jobs:
                   # When we have destructive changes, we need to use manifest-based deployment
                   if [ "$HAS_DESTRUCTIVE" = true ] || [ "$HAS_PRE_DESTRUCTIVE" = true ] || [ "$HAS_POST_DESTRUCTIVE" = true ]; then
                     echo "🔄 Using manifest-based deployment (required for destructive changes)"
-                    DEPLOY_CMD="$DEPLOY_CMD_BASE --manifest changed-sources/package/package.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app --manifest changed-sources/package/package.xml"
                   else
                     echo "🔄 Using source-based deployment (no destructive changes)"
                     DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app"
