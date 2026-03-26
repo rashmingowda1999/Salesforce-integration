@@ -173,14 +173,6 @@ extract_changed_field_permissions() {
             old_line=$(grep -F "${field_name}|||" "$temp_old_fields" | head -1)
             old_block="${old_line#*|||}"  # Remove everything up to and including first |||
 
-            # Debug: Show what we're comparing
-            echo "      [DEBUG] Checking field: $field_name"
-            if [ -z "$old_block" ]; then
-                echo "      [DEBUG] → No old block found (NEW)"
-            else
-                echo "      [DEBUG] → Old block found, comparing..."
-            fi
-
             if [ -z "$old_block" ]; then
                 # New field permission (didn't exist before)
                 echo "         • $field_name (NEW field permission)"
@@ -188,29 +180,20 @@ extract_changed_field_permissions() {
                 echo "$new_block" | sed 's/\\n/\n/g' >> "$output_file"
                 has_changes=true
             else
-                # Compare the blocks (normalize whitespace but preserve structure for comparison)
-                new_normalized=$(echo "$new_block" | sed 's/\\n//g' | sed 's/[[:space:]]*//g')
-                old_normalized=$(echo "$old_block" | sed 's/\\n//g' | sed 's/[[:space:]]*//g')
+                # Compare semantic values (editable/readable) instead of raw XML text
+                # This avoids false positives from whitespace/formatting differences
+                old_unescaped=$(echo "$old_block" | sed 's/\\n/\n/g')
+                new_unescaped=$(echo "$new_block" | sed 's/\\n/\n/g')
 
-                # Debug: Show normalized comparison
-                if [ "$new_normalized" = "$old_normalized" ]; then
-                    echo "      [DEBUG] → Blocks are IDENTICAL (skipping)"
-                else
-                    echo "      [DEBUG] → Blocks are DIFFERENT (deploying)"
-                    echo "      [DEBUG] → Old length: ${#old_normalized}, New length: ${#new_normalized}"
-                fi
+                # Extract actual permission values
+                old_editable=$(echo "$old_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
+                new_editable=$(echo "$new_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
+                old_readable=$(echo "$old_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
+                new_readable=$(echo "$new_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
 
-                if [ "$new_normalized" != "$old_normalized" ]; then
+                # Compare actual permission values
+                if [ "$old_editable" != "$new_editable" ] || [ "$old_readable" != "$new_readable" ]; then
                     echo "         • $field_name (CHANGED permission)"
-
-                    # Show what changed for debugging (unescape for parsing)
-                    old_unescaped=$(echo "$old_block" | sed 's/\\n/\n/g')
-                    new_unescaped=$(echo "$new_block" | sed 's/\\n/\n/g')
-
-                    old_editable=$(echo "$old_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
-                    new_editable=$(echo "$new_unescaped" | grep -o '<editable>[^<]*</editable>' | sed 's/<[^>]*>//g')
-                    old_readable=$(echo "$old_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
-                    new_readable=$(echo "$new_unescaped" | grep -o '<readable>[^<]*</readable>' | sed 's/<[^>]*>//g')
 
                     if [ "$old_editable" != "$new_editable" ]; then
                         echo "           └── Editable: $old_editable → $new_editable"
