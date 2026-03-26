@@ -223,8 +223,10 @@ jobs:
                                     # Debug: Show what we're copying
                                     echo "      • $PROFILE_NAME (delta - only changed elements)"
                                     echo "      [DEBUG] Delta profile field count: $(grep -c '<fieldPermissions>' "$DELTA_PROFILE")"
-                                    echo "      [DEBUG] Delta profile content preview:"
-                                    grep -A 3 '<fieldPermissions>' "$DELTA_PROFILE" | head -20
+                                    echo "      [DEBUG] COMPLETE Delta profile XML:"
+                                    echo "================================================"
+                                    cat "$DELTA_PROFILE"
+                                    echo "================================================"
 
                                     cp "$DELTA_PROFILE" "$DEST_PROFILE"
 

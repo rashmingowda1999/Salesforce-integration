@@ -168,14 +168,22 @@ extract_changed_field_permissions() {
 
     # Debug: Show temp file contents
     echo "      [DEBUG] Temp new fields:"
-    while IFS='|||' read -r fname fblock; do
-        field_tag=$(echo "$fblock" | sed 's/\\n/\n/g' | grep -o '<field>[^<]*</field>' || echo "N/A")
-        echo "      [DEBUG]   Variable: $fname | Block tag: $field_tag"
+    while IFS= read -r line; do
+        fname="${line%%|||*}"
+        fblock="${line#*|||}"
+        if [ "$fname" != "$line" ]; then
+            field_tag=$(echo "$fblock" | sed 's/\\n/\n/g' | grep -o '<field>[^<]*</field>' || echo "N/A")
+            echo "      [DEBUG]   Variable: $fname | Block tag: $field_tag"
+        fi
     done < "$temp_new_fields"
 
     # Compare each field permission block
-    while IFS='|||' read -r field_name new_block; do
-        if [ -n "$field_name" ] && [ -n "$new_block" ]; then
+    while IFS= read -r line; do
+        # Split on literal ||| delimiter (not individual | characters)
+        field_name="${line%%|||*}"
+        new_block="${line#*|||}"
+
+        if [ -n "$field_name" ] && [ -n "$new_block" ] && [ "$field_name" != "$line" ]; then
             # Use grep -F for literal string matching (no regex interpretation)
             old_line=$(grep -F "${field_name}|||" "$temp_old_fields" | head -1)
             old_block="${old_line#*|||}"  # Remove everything up to and including first |||
@@ -216,7 +224,13 @@ extract_changed_field_permissions() {
                     echo "      [DEBUG] Block readable: $new_readable"
 
                     # Unescape newlines before writing to output
-                    echo "$new_block" | sed 's/\\n/\n/g' >> "$output_file"
+                    UNESCAPED_BLOCK=$(echo "$new_block" | sed 's/\\n/\n/g')
+                    echo "$UNESCAPED_BLOCK" >> "$output_file"
+
+                    # Debug: Verify what was actually written
+                    echo "      [DEBUG] Verification - just wrote to file:"
+                    echo "$UNESCAPED_BLOCK" | grep -o '<field>[^<]*</field>'
+
                     has_changes=true
                 else
                     echo "         • $field_name (UNCHANGED - skipping)"
@@ -226,8 +240,11 @@ extract_changed_field_permissions() {
     done < "$temp_new_fields"
 
     # Check for deleted field permissions
-    while IFS='|||' read -r field_name old_block; do
-        if [ -n "$field_name" ] && [ -n "$old_block" ]; then
+    while IFS= read -r line; do
+        field_name="${line%%|||*}"
+        old_block="${line#*|||}"
+
+        if [ -n "$field_name" ] && [ -n "$old_block" ] && [ "$field_name" != "$line" ]; then
             # Use grep -F for literal string matching (no regex interpretation)
             new_line=$(grep -F "${field_name}|||" "$temp_new_fields" | head -1)
             # Check if this field exists in new file
@@ -244,6 +261,8 @@ extract_changed_field_permissions() {
 
     if [ "$has_changes" = true ]; then
         echo "      ✅ Only changed field permissions included in delta"
+        echo "      [DEBUG] Final output file field permissions:"
+        grep -A 3 '<fieldPermissions>' "$output_file" | head -20
         return 0
     else
         echo "      📋 No field permission changes detected"
