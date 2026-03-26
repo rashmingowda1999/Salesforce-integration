@@ -201,6 +201,17 @@ jobs:
                     if [ -d "${{ env.DELTA_DIR }}/profile-deltas" ]; then
                         echo "   📦 Including profile delta changes in deployment package"
 
+                        # Debug: Show what git-delta created
+                        echo "   [DEBUG] Profiles in force-app (from git-delta) BEFORE overwrite:"
+                        if [ -d "${{ env.DELTA_DIR }}/force-app/main/default/profiles" ]; then
+                            for pf in "${{ env.DELTA_DIR }}/force-app/main/default/profiles"/*.profile-meta.xml; do
+                                if [ -f "$pf" ]; then
+                                    echo "      File: $(basename "$pf")"
+                                    echo "      Field count: $(grep -c '<fieldPermissions>' "$pf" || echo 0)"
+                                fi
+                            done
+                        fi
+
                         # Copy delta profiles to force-app directory
                         for profile_dir in "${{ env.DELTA_DIR }}/profile-deltas"/*; do
                             if [ -d "$profile_dir" ] && [ "$(basename "$profile_dir")" != "profile-deltas" ]; then
@@ -232,6 +243,10 @@ jobs:
 
                                     # Debug: Verify what was copied
                                     echo "      [DEBUG] Destination field count after copy: $(grep -c '<fieldPermissions>' "$DEST_PROFILE")"
+                                    echo "      [DEBUG] DESTINATION FILE (what will be deployed):"
+                                    echo "================================================"
+                                    cat "$DEST_PROFILE"
+                                    echo "================================================"
                                 elif [ -f "$FULL_PROFILE" ]; then
                                     # Copy full profile (new profile)
                                     DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
