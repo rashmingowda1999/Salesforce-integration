@@ -219,8 +219,17 @@ jobs:
                                     # Copy delta profile (only changed elements)
                                     DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
                                     mkdir -p "$(dirname "$DEST_PROFILE")"
-                                    cp "$DELTA_PROFILE" "$DEST_PROFILE"
+
+                                    # Debug: Show what we're copying
                                     echo "      • $PROFILE_NAME (delta - only changed elements)"
+                                    echo "      [DEBUG] Delta profile field count: $(grep -c '<fieldPermissions>' "$DELTA_PROFILE")"
+                                    echo "      [DEBUG] Delta profile content preview:"
+                                    grep -A 3 '<fieldPermissions>' "$DELTA_PROFILE" | head -20
+
+                                    cp "$DELTA_PROFILE" "$DEST_PROFILE"
+
+                                    # Debug: Verify what was copied
+                                    echo "      [DEBUG] Destination field count after copy: $(grep -c '<fieldPermissions>' "$DEST_PROFILE")"
                                 elif [ -f "$FULL_PROFILE" ]; then
                                     # Copy full profile (new profile)
                                     DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
