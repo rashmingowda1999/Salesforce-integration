@@ -237,12 +237,16 @@ jobs:
 
                             # Check if Profile metadata type already exists in package.xml
                             if ! grep -q "<name>Profile</name>" "${{ env.DELTA_DIR }}/package/package.xml"; then
-                                # Add Profile section to package.xml
-                                sed -i '/<version>/i\
-    <types>\
-        <members>*</members>\
-        <name>Profile</name>\
-    </types>' "${{ env.DELTA_DIR }}/package/package.xml"
+                                # Add Profile section to package.xml using a temp file approach
+                                TEMP_PKG="/tmp/package_temp_$$.xml"
+                                awk '/<version>/ {
+                                    print "    <types>"
+                                    print "        <members>*</members>"
+                                    print "        <name>Profile</name>"
+                                    print "    </types>"
+                                }
+                                {print}' "${{ env.DELTA_DIR }}/package/package.xml" > "$TEMP_PKG"
+                                mv "$TEMP_PKG" "${{ env.DELTA_DIR }}/package/package.xml"
                                 echo "      ✅ Added Profile metadata type to package.xml"
                             else
                                 echo "      ✅ Profiles already included in package.xml"
