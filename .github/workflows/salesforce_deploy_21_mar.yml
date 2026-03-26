@@ -315,32 +315,31 @@ jobs:
                 if [ "$HAS_ADDITIVE" = true ]; then
                   echo "📦 Processing additive changes..."
 
-                  # When we have destructive changes, we need to use manifest-based deployment
+                  # When we have destructive changes, use source-dir with metadata deployment
                   if [ "$HAS_DESTRUCTIVE" = true ] || [ "$HAS_PRE_DESTRUCTIVE" = true ] || [ "$HAS_POST_DESTRUCTIVE" = true ]; then
-                    echo "🔄 Using manifest-based deployment (required for destructive changes)"
-                    # Note: We'll cd to changed-sources directory before deploying
-                    DEPLOY_CMD="$DEPLOY_CMD_BASE --manifest package/package.xml"
+                    echo "🔄 Using source-based deployment (with destructive changes support)"
+                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir ${{ env.DELTA_DIR }}/force-app"
                   else
                     echo "🔄 Using source-based deployment (no destructive changes)"
-                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app"
+                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir ${{ env.DELTA_DIR }}/force-app"
                   fi
 
                   # Only check coverage for Apex classes and triggers in additive changes
-                  APEX_FILES=$(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
-                  TRIGGER_FILES=$(find changed-sources/force-app -name "*.trigger" 2>/dev/null | wc -l)
-                  TEST_FILES=$(find changed-sources/force-app -name "*Test.cls" 2>/dev/null | wc -l)
+                  APEX_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
+                  TRIGGER_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*.trigger" 2>/dev/null | wc -l)
+                  TEST_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*Test.cls" 2>/dev/null | wc -l)
 
                   if [ "$APEX_FILES" -gt 0 ] || [ "$TRIGGER_FILES" -gt 0 ] || [ "$TEST_FILES" -gt 0 ]; then
                     echo "📋 Found Apex/Trigger classes - coverage validation required"
                     NEEDS_COVERAGE_VALIDATION=true
 
                     # Find test classes for changed regular Apex classes
-                    for apex_file in $(find changed-sources/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
+                    for apex_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
                       CLASS_NAME=$(basename "$apex_file" .cls)
                       echo "   🔍 Regular class: $CLASS_NAME"
 
                       for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
-                        TEST_FILE="changed-sources/force-app/main/default/classes/${pattern}.cls"
+                        TEST_FILE="${{ env.DELTA_DIR }}/force-app/main/default/classes/${pattern}.cls"
                         if [ -f "$TEST_FILE" ]; then
                           echo "   ✅ Found test class: $pattern"
                           if [ -z "$TEST_CLASSES_TO_RUN" ]; then
@@ -354,7 +353,7 @@ jobs:
                     done
 
                     # Process test classes directly
-                    for test_file in $(find changed-sources/force-app -name "*Test.cls" 2>/dev/null || true); do
+                    for test_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*Test.cls" 2>/dev/null || true); do
                       TEST_CLASS_NAME=$(basename "$test_file" .cls)
                       echo "   🧪 Test class: $TEST_CLASS_NAME"
 
@@ -384,25 +383,25 @@ jobs:
                 # Handle destructive-only deployments
                 if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = true ]; then
                   echo "🗑️  Deploying standalone destructive changes (no coverage validation needed)"
-                  DEPLOY_CMD="$DEPLOY_CMD_BASE --metadata-dir changed-sources/destructiveChanges --test-level NoTestRun"
+                  DEPLOY_CMD="$DEPLOY_CMD_BASE --metadata-dir ${{ env.DELTA_DIR }}/destructiveChanges --test-level NoTestRun"
                 fi
 
                 # Add destructive changes parameters to additive deployments
                 if [ "$HAS_ADDITIVE" = true ]; then
                   if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
                     echo "🚨 Adding pre-destructive changes to deployment"
-                    DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes destructiveChanges/destructiveChangesPre.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml"
                   fi
 
                   if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
                     echo "🚨 Adding post-destructive changes to deployment"
-                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes destructiveChanges/destructiveChangesPost.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml"
                   fi
 
                   # Handle main destructive changes as post-destructive if no explicit post file
                   if [ "$HAS_DESTRUCTIVE" = true ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
                     echo "🚨 Adding main destructive changes as post-destructive"
-                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes destructiveChanges/destructiveChanges.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml"
                   fi
                 fi
 
@@ -414,16 +413,10 @@ jobs:
                 # Execute deployment with detailed error capture
                 echo "🚀 Executing deployment..."
 
-                # Change to changed-sources directory so manifest paths are resolved correctly
-                cd changed-sources
-
                 set +e  # Don't exit on error immediately
                 DEPLOY_RESULT=$(eval "$DEPLOY_CMD" 2>&1)
                 DEPLOY_EXIT_CODE=$?
                 set -e  # Re-enable exit on error
-
-                # Change back to original directory
-                cd ..
 
                 # Restore original profile files from temp location
                 echo "[DEBUG] Restoring original profile files from temp..."
