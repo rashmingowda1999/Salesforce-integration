@@ -248,12 +248,16 @@ jobs:
                                     cat "$DEST_PROFILE"
                                     echo "================================================"
 
-                                    # CRITICAL: Move original profile OUT of profiles directory to prevent deployment
+                                    # CRITICAL: Replace original profile with delta for deployment
                                     ORIGINAL_PROFILE="force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
                                     if [ -f "$ORIGINAL_PROFILE" ]; then
-                                        echo "      [DEBUG] Moving original profile to temp location: $ORIGINAL_PROFILE"
+                                        echo "      [DEBUG] Backing up and replacing original profile with delta"
+                                        # Backup original to temp
                                         mkdir -p "/tmp/profile-backups"
-                                        mv "$ORIGINAL_PROFILE" "/tmp/profile-backups/${PROFILE_NAME}.profile-meta.xml"
+                                        cp "$ORIGINAL_PROFILE" "/tmp/profile-backups/${PROFILE_NAME}.profile-meta.xml"
+                                        # REPLACE original with delta profile
+                                        cp "$DELTA_PROFILE" "$ORIGINAL_PROFILE"
+                                        echo "      [DEBUG] Original backed up, delta now at: $ORIGINAL_PROFILE"
                                     fi
                                 elif [ -f "$FULL_PROFILE" ]; then
                                     # Copy full profile (new profile)
@@ -315,10 +319,10 @@ jobs:
                 if [ "$HAS_ADDITIVE" = true ]; then
                   echo "📦 Processing additive changes..."
 
-                  # When we have destructive changes, use source-dir with metadata deployment
+                  # When we have destructive changes, we need to use manifest-based deployment
                   if [ "$HAS_DESTRUCTIVE" = true ] || [ "$HAS_PRE_DESTRUCTIVE" = true ] || [ "$HAS_POST_DESTRUCTIVE" = true ]; then
-                    echo "🔄 Using source-based deployment (with destructive changes support)"
-                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir ${{ env.DELTA_DIR }}/force-app"
+                    echo "🔄 Using manifest-based deployment (required for destructive changes)"
+                    DEPLOY_CMD="$DEPLOY_CMD_BASE --manifest ${{ env.DELTA_DIR }}/package/package.xml"
                   else
                     echo "🔄 Using source-based deployment (no destructive changes)"
                     DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir ${{ env.DELTA_DIR }}/force-app"
@@ -418,18 +422,18 @@ jobs:
                 DEPLOY_EXIT_CODE=$?
                 set -e  # Re-enable exit on error
 
-                # Restore original profile files from temp location
-                echo "[DEBUG] Restoring original profile files from temp..."
+                # Restore original profile files from temp backup
+                echo "[DEBUG] Restoring original profile files from backup..."
                 if [ -d "/tmp/profile-backups" ]; then
                     for backup_file in /tmp/profile-backups/*.profile-meta.xml; do
                         if [ -f "$backup_file" ]; then
                             profile_name=$(basename "$backup_file")
                             original_location="force-app/main/default/profiles/$profile_name"
-                            mv "$backup_file" "$original_location"
-                            echo "[DEBUG] Restored: $original_location"
+                            cp "$backup_file" "$original_location"
+                            echo "[DEBUG] Restored from backup: $original_location"
                         fi
                     done
-                    rmdir /tmp/profile-backups 2>/dev/null || true
+                    rm -rf /tmp/profile-backups
                 fi
 
                 echo "📊 Deployment completed with exit code: $DEPLOY_EXIT_CODE"
