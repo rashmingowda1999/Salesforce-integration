@@ -248,11 +248,12 @@ jobs:
                                     cat "$DEST_PROFILE"
                                     echo "================================================"
 
-                                    # CRITICAL: Remove original profile from repo to prevent it from being deployed
+                                    # CRITICAL: Move original profile OUT of profiles directory to prevent deployment
                                     ORIGINAL_PROFILE="force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
                                     if [ -f "$ORIGINAL_PROFILE" ]; then
-                                        echo "      [DEBUG] Removing original profile to prevent full deployment: $ORIGINAL_PROFILE"
-                                        mv "$ORIGINAL_PROFILE" "$ORIGINAL_PROFILE.backup"
+                                        echo "      [DEBUG] Moving original profile to temp location: $ORIGINAL_PROFILE"
+                                        mkdir -p "/tmp/profile-backups"
+                                        mv "$ORIGINAL_PROFILE" "/tmp/profile-backups/${PROFILE_NAME}.profile-meta.xml"
                                     fi
                                 elif [ -f "$FULL_PROFILE" ]; then
                                     # Copy full profile (new profile)
@@ -424,15 +425,19 @@ jobs:
                 # Change back to original directory
                 cd ..
 
-                # Restore original profile files that were backed up
-                echo "[DEBUG] Restoring original profile files..."
-                for backup_file in force-app/main/default/profiles/*.backup; do
-                    if [ -f "$backup_file" ]; then
-                        original_file="${backup_file%.backup}"
-                        mv "$backup_file" "$original_file"
-                        echo "[DEBUG] Restored: $original_file"
-                    fi
-                done
+                # Restore original profile files from temp location
+                echo "[DEBUG] Restoring original profile files from temp..."
+                if [ -d "/tmp/profile-backups" ]; then
+                    for backup_file in /tmp/profile-backups/*.profile-meta.xml; do
+                        if [ -f "$backup_file" ]; then
+                            profile_name=$(basename "$backup_file")
+                            original_location="force-app/main/default/profiles/$profile_name"
+                            mv "$backup_file" "$original_location"
+                            echo "[DEBUG] Restored: $original_location"
+                        fi
+                    done
+                    rmdir /tmp/profile-backups 2>/dev/null || true
+                fi
 
                 echo "📊 Deployment completed with exit code: $DEPLOY_EXIT_CODE"
 
