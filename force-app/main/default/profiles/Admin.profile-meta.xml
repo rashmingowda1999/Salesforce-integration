@@ -13,6 +13,6 @@
     <fieldPermissions>
         <editable>false</editable>
         <field>Account.Active4__c</field>
-        <readable>true</readable>
+        <readable>false</readable>
     </fieldPermissions>
 </Profile>
