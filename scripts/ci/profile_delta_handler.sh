@@ -166,6 +166,13 @@ extract_changed_field_permissions() {
     }
     ' "$old_file" > "$temp_old_fields"
 
+    # Debug: Show temp file contents
+    echo "      [DEBUG] Temp new fields:"
+    while IFS='|||' read -r fname fblock; do
+        field_tag=$(echo "$fblock" | sed 's/\\n/\n/g' | grep -o '<field>[^<]*</field>' || echo "N/A")
+        echo "      [DEBUG]   Variable: $fname | Block tag: $field_tag"
+    done < "$temp_new_fields"
+
     # Compare each field permission block
     while IFS='|||' read -r field_name new_block; do
         if [ -n "$field_name" ] && [ -n "$new_block" ]; then
@@ -201,6 +208,12 @@ extract_changed_field_permissions() {
                     if [ "$old_readable" != "$new_readable" ]; then
                         echo "           └── Readable: $old_readable → $new_readable"
                     fi
+
+                    # Debug: Show what we're about to write
+                    echo "      [DEBUG] Writing field: $field_name"
+                    echo "      [DEBUG] Block field tag: $(echo "$new_unescaped" | grep -o '<field>[^<]*</field>')"
+                    echo "      [DEBUG] Block editable: $new_editable"
+                    echo "      [DEBUG] Block readable: $new_readable"
 
                     # Unescape newlines before writing to output
                     echo "$new_block" | sed 's/\\n/\n/g' >> "$output_file"
