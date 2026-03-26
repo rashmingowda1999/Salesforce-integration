@@ -310,7 +310,8 @@ jobs:
                   # When we have destructive changes, we need to use manifest-based deployment
                   if [ "$HAS_DESTRUCTIVE" = true ] || [ "$HAS_PRE_DESTRUCTIVE" = true ] || [ "$HAS_POST_DESTRUCTIVE" = true ]; then
                     echo "🔄 Using manifest-based deployment (required for destructive changes)"
-                    DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app --manifest changed-sources/package/package.xml"
+                    # Note: We'll cd to changed-sources directory before deploying
+                    DEPLOY_CMD="$DEPLOY_CMD_BASE --manifest package/package.xml"
                   else
                     echo "🔄 Using source-based deployment (no destructive changes)"
                     DEPLOY_CMD="$DEPLOY_CMD_BASE --source-dir changed-sources/force-app"
@@ -382,18 +383,18 @@ jobs:
                 if [ "$HAS_ADDITIVE" = true ]; then
                   if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
                     echo "🚨 Adding pre-destructive changes to deployment"
-                    DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes changed-sources/destructiveChanges/destructiveChangesPre.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --pre-destructive-changes destructiveChanges/destructiveChangesPre.xml"
                   fi
 
                   if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
                     echo "🚨 Adding post-destructive changes to deployment"
-                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChangesPost.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes destructiveChanges/destructiveChangesPost.xml"
                   fi
 
                   # Handle main destructive changes as post-destructive if no explicit post file
                   if [ "$HAS_DESTRUCTIVE" = true ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
                     echo "🚨 Adding main destructive changes as post-destructive"
-                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes changed-sources/destructiveChanges/destructiveChanges.xml"
+                    DEPLOY_CMD="$DEPLOY_CMD --post-destructive-changes destructiveChanges/destructiveChanges.xml"
                   fi
                 fi
 
@@ -404,10 +405,17 @@ jobs:
 
                 # Execute deployment with detailed error capture
                 echo "🚀 Executing deployment..."
+
+                # Change to changed-sources directory so manifest paths are resolved correctly
+                cd changed-sources
+
                 set +e  # Don't exit on error immediately
                 DEPLOY_RESULT=$(eval "$DEPLOY_CMD" 2>&1)
                 DEPLOY_EXIT_CODE=$?
                 set -e  # Re-enable exit on error
+
+                # Change back to original directory
+                cd ..
 
                 echo "📊 Deployment completed with exit code: $DEPLOY_EXIT_CODE"
 
