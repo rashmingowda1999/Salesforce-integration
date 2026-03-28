@@ -306,7 +306,8 @@ jobs:
                     for apex_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
                       CLASS_NAME=$(basename "$apex_file" .cls)
                       for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
-                        TEST_FILE="${{ env.DELTA_DIR }}/force-app/main/default/classes/${pattern}.cls"
+                        # Look for test class in MAIN REPO, not delta (test may not have changed)
+                        TEST_FILE="force-app/main/default/classes/${pattern}.cls"
                         if [ -f "$TEST_FILE" ]; then
                           if [ -z "$TEST_CLASSES_TO_RUN" ]; then
                             TEST_CLASSES_TO_RUN="$pattern"
@@ -899,7 +900,8 @@ jobs:
                       echo "   🔍 Regular class: $CLASS_NAME"
 
                       for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
-                        TEST_FILE="${{ env.DELTA_DIR }}/force-app/main/default/classes/${pattern}.cls"
+                        # Look for test class in MAIN REPO, not delta (test may not have changed)
+                        TEST_FILE="force-app/main/default/classes/${pattern}.cls"
                         echo "   🔍 Checking for test: $TEST_FILE"
                         if [ -f "$TEST_FILE" ]; then
                           echo "   ✅ Found test class: $pattern"
