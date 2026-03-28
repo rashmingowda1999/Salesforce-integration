@@ -1,0 +1,230 @@
+name: 🔄 Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_directory:
+        description: 'Backup directory (e.g., backups/20260326-090000)'
+        required: true
+        type: string
+      target_org:
+        description: 'Target Salesforce Org'
+        required: true
+        type: choice
+        options:
+          - targetOrg
+          - production
+          - staging
+        default: 'targetOrg'
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip test execution?'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Display rollback details
+        run: |
+          echo "==========================================="
+          echo "🔄 ROLLBACK DEPLOYMENT"
+          echo "==========================================="
+          echo "📦 Backup: ${{ github.event.inputs.backup_directory }}"
+          echo "🎯 Target: ${{ github.event.inputs.target_org }}"
+          echo "📝 Reason: ${{ github.event.inputs.reason }}"
+          echo "👤 Requested by: ${{ github.actor }}"
+          echo "⏰ Timestamp: $(date)"
+          echo "==========================================="
+
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Salesforce CLI
+        run: npm install @salesforce/cli --global
+
+      - name: Authenticate to Salesforce
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          sf org login jwt \
+            --username ${{ secrets.DEPLOYMENT_USER_NAME }} \
+            --jwt-key-file server.key \
+            --client-id ${{ secrets.CONSUMER_KEY }} \
+            --instance-url ${{ vars.INSTANCE_URL }} \
+            --alias ${{ github.event.inputs.target_org }}
+
+      - name: 🔍 Verify backup exists
+        run: |
+          if [ ! -d "${{ github.event.inputs.backup_directory }}" ]; then
+            echo "❌ ERROR: Backup directory not found!"
+            echo "📂 Looking for: ${{ github.event.inputs.backup_directory }}"
+            echo ""
+            echo "📋 Available backups:"
+            if [ -d "backups" ]; then
+              ls -lht backups/ | head -10
+            else
+              echo "No backups directory found"
+            fi
+            exit 1
+          fi
+
+          echo "✅ Backup found!"
+          echo "📋 Backup contents:"
+          find "${{ github.event.inputs.backup_directory }}" -type f | head -20
+
+      - name: 🔄 Restore from backup
+        id: restore
+        run: |
+          echo "🚀 Starting rollback deployment..."
+
+          TEST_LEVEL="NoTestRun"
+          if [ "${{ github.event.inputs.skip_tests }}" = "false" ]; then
+            TEST_LEVEL="RunLocalTests"
+          fi
+
+          sf project deploy start \
+            --target-org ${{ github.event.inputs.target_org }} \
+            --source-dir "${{ github.event.inputs.backup_directory }}" \
+            --test-level $TEST_LEVEL \
+            --json > rollback-result.json
+
+          cat rollback-result.json
+
+          # Extract deployment ID
+          DEPLOY_ID=$(jq -r '.result.id // "Unknown"' rollback-result.json)
+          echo "deployment_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
+
+      - name: ✅ Verify rollback success
+        run: |
+          STATUS=$(jq -r '.status' rollback-result.json)
+
+          if [ "$STATUS" != "0" ]; then
+            echo "❌ ROLLBACK FAILED!"
+            echo ""
+            echo "Error details:"
+            jq -r '.message // "Unknown error"' rollback-result.json
+            exit 1
+          fi
+
+          echo "✅ ROLLBACK COMPLETED SUCCESSFULLY!"
+          echo ""
+          echo "📊 Deployment Summary:"
+          jq -r '.result | "   • Components: \(.numberComponentsDeployed // 0) restored"' rollback-result.json
+          jq -r '.result | "   • Status: \(.status // "Unknown")"' rollback-result.json
+
+      - name: 📝 Create audit log
+        run: |
+          AUDIT_DIR="rollbacks"
+          AUDIT_FILE="$AUDIT_DIR/rollback-$(date +%Y%m%d-%H%M%S).log"
+          mkdir -p "$AUDIT_DIR"
+
+          cat > "$AUDIT_FILE" << 'AUDIT_EOF'
+          =====================================
+          ROLLBACK AUDIT LOG
+          =====================================
+          Date: $(date)
+          Performer: ${{ github.actor }}
+          Target Org: ${{ github.event.inputs.target_org }}
+          Backup Used: ${{ github.event.inputs.backup_directory }}
+          Reason: ${{ github.event.inputs.reason }}
+          Deployment ID: ${{ steps.restore.outputs.deployment_id }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          DEPLOYMENT RESULT:
+          AUDIT_EOF
+
+          jq '.' rollback-result.json >> "$AUDIT_FILE"
+
+          echo "" >> "$AUDIT_FILE"
+          echo "=====================================" >> "$AUDIT_FILE"
+
+          echo "📝 Audit log created: $AUDIT_FILE"
+
+          # Commit audit log to repository
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add "$AUDIT_FILE"
+          git commit -m "Add rollback audit log - $(date +%Y-%m-%d)"
+          git push
+
+      - name: 📢 Notify success
+        if: success()
+        run: |
+          echo "✅ Rollback completed successfully!"
+          echo "📋 Deployment ID: ${{ steps.restore.outputs.deployment_id }}"
+
+          # Send Slack notification if configured
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"✅ Rollback Successful\",
+                \"blocks\": [
+                  {
+                    \"type\": \"header\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"✅ Rollback Completed\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {\"type\": \"mrkdwn\", \"text\": \"*Org:*\\n${{ github.event.inputs.target_org }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*By:*\\n${{ github.actor }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Backup:*\\n${{ github.event.inputs.backup_directory }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Deployment ID:*\\n${{ steps.restore.outputs.deployment_id }}\"}
+                    ]
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"*Reason:*\\n${{ github.event.inputs.reason }}\"
+                    }
+                  }
+                ]
+              }" \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+      - name: 🚨 Notify failure
+        if: failure()
+        run: |
+          echo "❌ Rollback failed!"
+
+          # Send Slack notification if configured
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"❌ Rollback Failed\",
+                \"blocks\": [
+                  {
+                    \"type\": \"header\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"❌ Rollback Failed\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"text\": {
+                      \"type\": \"mrkdwn\",
+                      \"text\": \"Rollback to *${{ github.event.inputs.target_org }}* failed!\\n\\n*By:* ${{ github.actor }}\\n*Backup:* ${{ github.event.inputs.backup_directory }}\\n\\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>\"
+                    }
+                  }
+                ]
+              }" \
+              ${{ secrets.SLACK_WEBHOOK_URL }}
+          fi
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -f server.key
+          rm -f rollback-result.json
