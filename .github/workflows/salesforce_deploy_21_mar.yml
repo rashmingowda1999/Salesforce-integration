@@ -703,7 +703,7 @@ jobs:
 
           - name: 'Upload backup as GitHub artifact'
             if: env.HAS_BACKUP == 'true'
-            uses: actions/upload-artifact@v3
+            uses: actions/upload-artifact@v4
             with:
               name: salesforce-backup-${{ github.sha }}
               path: ${{ env.BACKUP_DIR }}
