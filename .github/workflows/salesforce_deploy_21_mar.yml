@@ -1,5 +1,11 @@
-name: Deploy to dev environment on push to main
+name: Salesforce CI/CD Pipeline
 on:
+  # Dry run validation on PR
+  pull_request:
+    branches: [ test, main ]
+    paths:
+      - 'force-app/**'
+  # Actual deployment on push/merge
   push:
     branches: [ test ]
     paths:
@@ -11,7 +17,482 @@ env:
   TARGET_ORG_ALIAS: targetOrg
 
 jobs:
+  # ============================================
+  # DRY RUN VALIDATION (Pull Requests)
+  # ============================================
+  Validate-PR:
+      name: "Validate Changes (Dry Run)"
+      if: github.event_name == 'pull_request'
+      runs-on: ubuntu-latest
+      environment: dev
+      steps:
+          - uses: actions/setup-node@v3
+            with:
+              node-version: '18'
+          - name: 'Checkout source code'
+            uses: actions/checkout@v3
+            with:
+              fetch-depth: 0
+
+          # Install Salesforce CLI
+          - name: 'Install sfdx'
+            run: npm install @salesforce/cli --global
+          - name: 'Installing sfdx git delta'
+            run: |
+                echo Y | sfdx plugins:install sfdx-git-delta
+                sfdx plugins
+          - name: 'Create delta packages'
+            run: |
+                mkdir changed-sources
+
+                # Get the base branch comparison point
+                BASE_SHA="${{ github.event.pull_request.base.sha }}"
+                HEAD_SHA="${{ github.sha }}"
+
+                echo "🔍 Comparing changes between $BASE_SHA and $HEAD_SHA"
+                echo ""
+
+                # Show git changes for debugging
+                echo "[DEBUG] Git diff between base and head:"
+                git diff --name-only $BASE_SHA $HEAD_SHA
+                echo ""
+                echo "[DEBUG] Deleted files (destructive changes):"
+                git diff --name-only --diff-filter=D $BASE_SHA $HEAD_SHA
+                echo ""
+
+                # Run delta generation with destructive changes support
+                echo "🔄 Generating delta packages with destructive changes support..."
+                sf sgd source delta --to "$HEAD_SHA" --from "$BASE_SHA" --output-dir changed-sources/ --generate-delta --source-dir force-app/
+                echo "[INFO] Delta generation completed"
+
+                # Show what was created
+                echo ""
+                echo "[DEBUG] Contents of changed-sources directory:"
+                find changed-sources/ -type f -name "*.xml" 2>/dev/null | head -20
+
+                # Check for package.xml and destructive changes
+                if [ -f "changed-sources/package/package.xml" ]; then
+                  echo ""
+                  echo "✅ [ADDITIVE CHANGES] package.xml found:"
+                  cat changed-sources/package/package.xml | head -20
+                  echo "..."
+                else
+                  echo ""
+                  echo "📋 [INFO] No additive package.xml was created"
+                fi
+
+                if [ -f "changed-sources/destructiveChanges/destructiveChanges.xml" ]; then
+                  echo ""
+                  echo "🚨 [DESTRUCTIVE CHANGES] destructiveChanges.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChanges.xml
+                  echo ""
+                  echo "⚠️  CAUTION: This PR includes component deletions!"
+                else
+                  echo ""
+                  echo "✅ [INFO] No destructive changes detected"
+                fi
+
+                # Check for pre/post destructive changes
+                if [ -f "changed-sources/destructiveChanges/destructiveChangesPost.xml" ]; then
+                  echo ""
+                  echo "🚨 [POST-DESTRUCTIVE] destructiveChangesPost.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChangesPost.xml
+                else
+                  echo "📋 [INFO] No post-destructive changes detected"
+                fi
+
+                if [ -f "changed-sources/destructiveChanges/destructiveChangesPre.xml" ]; then
+                  echo ""
+                  echo "🚨 [PRE-DESTRUCTIVE] destructiveChangesPre.xml found:"
+                  cat changed-sources/destructiveChanges/destructiveChangesPre.xml
+                else
+                  echo "📋 [INFO] No pre-destructive changes detected"
+                fi
+
+          - name: 'Process profile changes (selective deployment)'
+            run: |
+                echo "🎯 Processing profile changes with selective deployment..."
+
+                # Make the profile delta handler executable
+                chmod +x scripts/ci/profile_delta_handler.sh
+
+                # Get proper commit comparison for PRs
+                BASE_SHA="${{ github.event.pull_request.base.sha }}"
+                HEAD_SHA="${{ github.sha }}"
+
+                # Run profile delta processing
+                scripts/ci/profile_delta_handler.sh "${{ env.DELTA_DIR }}" "$BASE_SHA" "$HEAD_SHA"
+
+                # Check if we have profile changes to process
+                if [ -f "${{ env.DELTA_DIR }}/profile-deltas/has_profile_changes.flag" ]; then
+                  HAS_PROFILE_CHANGES=$(cat "${{ env.DELTA_DIR }}/profile-deltas/has_profile_changes.flag")
+
+                  if [ "$HAS_PROFILE_CHANGES" = "true" ]; then
+                    echo ""
+                    echo "📊 Profile Delta Summary:"
+                    echo "   • Profile changes detected and processed"
+                    echo "   • Selective deployment packages created"
+                    echo "   • Delta packages in: ${{ env.DELTA_DIR }}/profile-deltas/"
+
+                    # Show profile delta packages
+                    echo ""
+                    echo "📦 Profile Delta Packages:"
+                    find "${{ env.DELTA_DIR }}/profile-deltas" -name "*.xml" -type f | head -10 | sed 's/^/   • /'
+
+                    # Set flag for later validation steps
+                    echo "true" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                  else
+                    echo "✅ No profile changes detected"
+                    echo "false" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                  fi
+                else
+                  echo "✅ No profile processing needed"
+                  echo "false" > "${{ env.DELTA_DIR }}/has_profile_deltas.flag"
+                fi
+
+          - name: 'Validate profile changes (enhanced validation)'
+            run: |
+                echo "🔍 Running enhanced profile validation..."
+
+                # Make the profile validation script executable
+                chmod +x scripts/ci/profile_validation.sh
+
+                # Run enhanced profile validation (warning-only, doesn't block)
+                set +e
+                scripts/ci/profile_validation.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}"
+                VALIDATION_EXIT_CODE=$?
+                set -e
+
+                if [ $VALIDATION_EXIT_CODE -ne 0 ]; then
+                    echo "⚠️  Profile validation warnings detected (validation will continue)"
+                fi
+
+          - name: 'Pre-destructive changes validation'
+            run: |
+                chmod +x scripts/ci/pre_destructive_validation.sh
+                scripts/ci/pre_destructive_validation.sh "${{ env.DELTA_DIR }}"
+
+          - name: 'Authenticate with Salesforce'
+            run: |
+                echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+                sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+
+          - name: 'Run Validation (Dry Run - No Deployment)'
+            id: dry_run
+            run: |
+                # Check for both additive and destructive changes
+                HAS_ADDITIVE=false
+                HAS_DESTRUCTIVE=false
+                HAS_PRE_DESTRUCTIVE=false
+                HAS_POST_DESTRUCTIVE=false
+
+                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                  HAS_ADDITIVE=true
+                  echo "✅ Additive changes detected"
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml" ]; then
+                  HAS_DESTRUCTIVE=true
+                  echo "🚨 Main destructive changes detected"
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml" ]; then
+                  HAS_PRE_DESTRUCTIVE=true
+                  echo "🚨 Pre-destructive changes detected"
+                fi
+
+                if [ -f "${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml" ]; then
+                  HAS_POST_DESTRUCTIVE=true
+                  echo "🚨 Post-destructive changes detected"
+                fi
+
+                # Show what we detected
+                echo "📊 Validation Analysis:"
+                echo "   • Additive changes: $HAS_ADDITIVE"
+                echo "   • Destructive changes: $HAS_DESTRUCTIVE"
+                echo "   • Pre-destructive changes: $HAS_PRE_DESTRUCTIVE"
+                echo "   • Post-destructive changes: $HAS_POST_DESTRUCTIVE"
+
+                # Include profile delta changes in validation
+                if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ] && [ "$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")" = "true" ]; then
+                    echo "   🎯 Profile changes: Will be validated"
+
+                    # Copy profile delta files to main directory
+                    if [ -d "${{ env.DELTA_DIR }}/profile-deltas" ]; then
+                        for profile_dir in "${{ env.DELTA_DIR }}/profile-deltas"/*; do
+                            if [ -d "$profile_dir" ] && [ "$(basename "$profile_dir")" != "profile-deltas" ]; then
+                                PROFILE_NAME=$(basename "$profile_dir")
+
+                                if [[ "$PROFILE_NAME" == *".flag" ]] || [[ "$PROFILE_NAME" == *".txt" ]]; then
+                                    continue
+                                fi
+
+                                DELTA_PROFILE="$profile_dir/${PROFILE_NAME}-delta.profile-meta.xml"
+                                FULL_PROFILE="$profile_dir/${PROFILE_NAME}.profile-meta.xml"
+
+                                if [ -f "$DELTA_PROFILE" ]; then
+                                    DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
+                                    mkdir -p "$(dirname "$DEST_PROFILE")"
+                                    cp "$DELTA_PROFILE" "$DEST_PROFILE"
+
+                                    # Replace original for validation
+                                    ORIGINAL_PROFILE="force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
+                                    if [ -f "$ORIGINAL_PROFILE" ]; then
+                                        mkdir -p "/tmp/profile-backups"
+                                        cp "$ORIGINAL_PROFILE" "/tmp/profile-backups/${PROFILE_NAME}.profile-meta.xml"
+                                        cp "$DELTA_PROFILE" "$ORIGINAL_PROFILE"
+                                    fi
+                                elif [ -f "$FULL_PROFILE" ]; then
+                                    DEST_PROFILE="${{ env.DELTA_DIR }}/force-app/main/default/profiles/${PROFILE_NAME}.profile-meta.xml"
+                                    mkdir -p "$(dirname "$DEST_PROFILE")"
+                                    cp "$FULL_PROFILE" "$DEST_PROFILE"
+                                fi
+                            fi
+                        done
+
+                        # Update package.xml to include profiles
+                        if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                            if ! grep -q "<name>Profile</name>" "${{ env.DELTA_DIR }}/package/package.xml"; then
+                                TEMP_PKG="/tmp/package_temp_$$.xml"
+                                awk '/<version>/ {
+                                    print "    <types>"
+                                    print "        <members>*</members>"
+                                    print "        <name>Profile</name>"
+                                    print "    </types>"
+                                }
+                                {print}' "${{ env.DELTA_DIR }}/package/package.xml" > "$TEMP_PKG"
+                                mv "$TEMP_PKG" "${{ env.DELTA_DIR }}/package/package.xml"
+                            fi
+                        fi
+                    fi
+                fi
+
+                if [ "$HAS_ADDITIVE" = false ] && [ "$HAS_DESTRUCTIVE" = false ] && [ "$HAS_PRE_DESTRUCTIVE" = false ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
+                  echo "📋 No changes detected for validation"
+                  echo "validation_status=no_changes" >> $GITHUB_OUTPUT
+                  exit 0
+                fi
+
+                echo ""
+                echo "🔍 Running validation (dry run - no actual deployment)..."
+
+                # Build validation command
+                VALIDATE_CMD_BASE="sf project deploy start --target-org ${{ env.TARGET_ORG_ALIAS }} --dry-run --json"
+
+                # Discover test classes
+                NEEDS_COVERAGE_VALIDATION=false
+                TEST_CLASSES_TO_RUN=""
+
+                if [ "$HAS_ADDITIVE" = true ]; then
+                  if [ "$HAS_DESTRUCTIVE" = true ] || [ "$HAS_PRE_DESTRUCTIVE" = true ] || [ "$HAS_POST_DESTRUCTIVE" = true ]; then
+                    VALIDATE_CMD="$VALIDATE_CMD_BASE --manifest ${{ env.DELTA_DIR }}/package/package.xml"
+                  else
+                    VALIDATE_CMD="$VALIDATE_CMD_BASE --source-dir ${{ env.DELTA_DIR }}/force-app"
+                  fi
+
+                  # Check for Apex/Trigger classes
+                  APEX_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null | wc -l)
+                  TRIGGER_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*.trigger" 2>/dev/null | wc -l)
+                  TEST_FILES=$(find ${{ env.DELTA_DIR }}/force-app -name "*Test.cls" 2>/dev/null | wc -l)
+
+                  if [ "$APEX_FILES" -gt 0 ] || [ "$TRIGGER_FILES" -gt 0 ] || [ "$TEST_FILES" -gt 0 ]; then
+                    NEEDS_COVERAGE_VALIDATION=true
+
+                    # Find test classes
+                    for apex_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
+                      CLASS_NAME=$(basename "$apex_file" .cls)
+                      for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
+                        TEST_FILE="${{ env.DELTA_DIR }}/force-app/main/default/classes/${pattern}.cls"
+                        if [ -f "$TEST_FILE" ]; then
+                          if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                            TEST_CLASSES_TO_RUN="$pattern"
+                          else
+                            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
+                          fi
+                          break
+                        fi
+                      done
+                    done
+
+                    # Add test classes directly
+                    for test_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*Test.cls" 2>/dev/null || true); do
+                      TEST_CLASS_NAME=$(basename "$test_file" .cls)
+                      if [[ ",$TEST_CLASSES_TO_RUN," != *",$TEST_CLASS_NAME,"* ]]; then
+                        if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                          TEST_CLASSES_TO_RUN="$TEST_CLASS_NAME"
+                        else
+                          TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$TEST_CLASS_NAME"
+                        fi
+                      fi
+                    done
+
+                    if [ -n "$TEST_CLASSES_TO_RUN" ]; then
+                      echo "🧪 Test classes to run: $TEST_CLASSES_TO_RUN"
+                      VALIDATE_CMD="$VALIDATE_CMD --test-level RunSpecifiedTests --tests $TEST_CLASSES_TO_RUN"
+                    else
+                      echo "⚠️  No test classes found - using RunLocalTests"
+                      VALIDATE_CMD="$VALIDATE_CMD --test-level RunLocalTests"
+                    fi
+                  else
+                    VALIDATE_CMD="$VALIDATE_CMD --test-level NoTestRun"
+                  fi
+                fi
+
+                # Add destructive changes to validation
+                if [ "$HAS_ADDITIVE" = true ]; then
+                  if [ "$HAS_PRE_DESTRUCTIVE" = true ]; then
+                    VALIDATE_CMD="$VALIDATE_CMD --pre-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml"
+                  fi
+
+                  if [ "$HAS_POST_DESTRUCTIVE" = true ]; then
+                    VALIDATE_CMD="$VALIDATE_CMD --post-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml"
+                  fi
+
+                  if [ "$HAS_DESTRUCTIVE" = true ] && [ "$HAS_POST_DESTRUCTIVE" = false ]; then
+                    VALIDATE_CMD="$VALIDATE_CMD --post-destructive-changes ${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml"
+                  fi
+                fi
+
+                echo ""
+                echo "[DEBUG] Validation command:"
+                echo "$VALIDATE_CMD"
+                echo ""
+
+                # Execute validation
+                set +e
+                VALIDATE_RESULT=$(eval "$VALIDATE_CMD" 2>&1)
+                VALIDATE_EXIT_CODE=$?
+                set -e
+
+                # Restore original profile files
+                if [ -d "/tmp/profile-backups" ]; then
+                    for backup_file in /tmp/profile-backups/*.profile-meta.xml; do
+                        if [ -f "$backup_file" ]; then
+                            profile_name=$(basename "$backup_file")
+                            original_location="force-app/main/default/profiles/$profile_name"
+                            cp "$backup_file" "$original_location"
+                        fi
+                    done
+                    rm -rf /tmp/profile-backups
+                fi
+
+                # Save validation result for PR comment
+                echo "$VALIDATE_RESULT" > validation-result.json
+
+                echo ""
+                echo "[DEBUG] === VALIDATION RESULT ==="
+                echo "$VALIDATE_RESULT"
+                echo "[DEBUG] === END VALIDATION RESULT ==="
+                echo ""
+
+                if [ $VALIDATE_EXIT_CODE -eq 0 ]; then
+                  VALIDATION_ID=$(echo "$VALIDATE_RESULT" | jq -r '.result.id // "Unknown"')
+                  echo "✅ Validation passed successfully!"
+                  echo "📋 Validation ID: $VALIDATION_ID"
+                  echo ""
+                  echo "validation_status=success" >> $GITHUB_OUTPUT
+                  echo "validation_id=$VALIDATION_ID" >> $GITHUB_OUTPUT
+
+                  # Show validation summary
+                  echo "📊 Validation Summary:"
+                  echo "$VALIDATE_RESULT" | jq -r '.result | "   • Components: \(.numberComponentsTotal // "0") total"'
+                  echo "$VALIDATE_RESULT" | jq -r '.result | "   • Status: \(.status // "Unknown")"'
+
+                  # Show test results if available
+                  if [ "$NEEDS_COVERAGE_VALIDATION" = true ]; then
+                    TEST_RESULTS=$(echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult // empty')
+                    if [ -n "$TEST_RESULTS" ] && [ "$TEST_RESULTS" != "null" ]; then
+                      echo ""
+                      echo "🧪 Test Results:"
+                      echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
+                      echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
+
+                      TEST_RUN_COVERAGE=$(echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // empty' 2>/dev/null || echo "")
+                      if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+                        echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
+
+                        COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
+                        if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
+                          echo ""
+                          echo "❌ VALIDATION FAILED - INSUFFICIENT TEST COVERAGE!"
+                          echo "   Coverage (${TEST_RUN_COVERAGE}%) is below ${{ env.COVERAGE_THRESHOLD }}% threshold."
+                          echo "validation_status=coverage_failed" >> $GITHUB_OUTPUT
+                          exit 1
+                        else
+                          echo "   ✅ Coverage (${TEST_RUN_COVERAGE}%) meets ${{ env.COVERAGE_THRESHOLD }}% requirement"
+                        fi
+                      fi
+                    fi
+                  fi
+                else
+                  echo "❌ Validation failed!"
+                  echo "validation_status=failed" >> $GITHUB_OUTPUT
+                  echo "$VALIDATE_RESULT"
+                  exit 1
+                fi
+
+          - name: 'Post validation results to PR'
+            if: always()
+            uses: actions/github-script@v6
+            with:
+              script: |
+                const fs = require('fs');
+                const validationStatus = '${{ steps.dry_run.outputs.validation_status }}';
+                const validationId = '${{ steps.dry_run.outputs.validation_id }}';
+
+                let commentBody = '## 🔍 Validation Results (Dry Run)\n\n';
+
+                if (validationStatus === 'no_changes') {
+                  commentBody += '📋 **Status**: No changes detected\n\n';
+                  commentBody += 'This PR does not contain any Salesforce metadata changes.\n';
+                } else if (validationStatus === 'success') {
+                  commentBody += '✅ **Status**: Validation Passed\n\n';
+                  commentBody += `**Validation ID**: \`${validationId}\`\n\n`;
+                  commentBody += '### What This Means\n';
+                  commentBody += '- ✅ All metadata is valid\n';
+                  commentBody += '- ✅ All tests passed\n';
+                  commentBody += '- ✅ Code coverage meets requirements\n';
+                  commentBody += '- ✅ Ready to merge\n\n';
+                  commentBody += '**No actual deployment occurred** - this was a validation-only check.\n\n';
+                  commentBody += 'Upon merge to `test` branch, the actual deployment will occur.\n';
+                } else if (validationStatus === 'coverage_failed') {
+                  commentBody += '❌ **Status**: Validation Failed - Insufficient Coverage\n\n';
+                  commentBody += '### Required Action\n';
+                  commentBody += '- Improve test coverage in your test classes\n';
+                  commentBody += '- Ensure test run coverage ≥ 85%\n';
+                  commentBody += '- Review the workflow logs for detailed coverage breakdown\n';
+                } else if (validationStatus === 'failed') {
+                  commentBody += '❌ **Status**: Validation Failed\n\n';
+                  commentBody += '### Required Action\n';
+                  commentBody += '- Review the workflow logs for error details\n';
+                  commentBody += '- Fix the issues and push new commits\n';
+                  commentBody += '- Validation will run automatically on new commits\n';
+                } else {
+                  commentBody += '⚠️ **Status**: Unknown\n\n';
+                  commentBody += 'Please check the workflow logs for details.\n';
+                }
+
+                commentBody += '\n---\n';
+                commentBody += `🤖 Validation run: [Workflow #${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})`;
+
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: commentBody
+                });
+
+          - name: 'Cleanup'
+            if: always()
+            run: |
+                rm -f server.key validation-result.json
+
+  # ============================================
+  # ACTUAL DEPLOYMENT (Push to test branch)
+  # ============================================
   Deploy-to-dev-environment:
+      name: "Deploy to Dev Environment"
+      if: github.event_name == 'push'
       runs-on: ubuntu-latest
       environment: dev
       steps:
@@ -155,6 +636,74 @@ jobs:
             run: |
                 echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
                 sf org login jwt --username ${{ secrets.DEPLOYMENT_USER_NAME }} --jwt-key-file server.key --client-id ${{ secrets.CONSUMER_KEY }} --instance-url ${{ vars.INSTANCE_URL }} --set-default --alias ${{ env.TARGET_ORG_ALIAS }}
+
+          - name: 'Create backup before deployment'
+            run: |
+                echo "📦 Creating backup of current org state..."
+
+                # Create backup directory with timestamp
+                BACKUP_DIR="backups/$(date +%Y%m%d-%H%M%S)"
+                mkdir -p "$BACKUP_DIR"
+
+                # Check if there are any changes to backup
+                if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
+                  echo "🔍 Backing up components that will be changed..."
+
+                  # Retrieve current state of components from org
+                  sf project retrieve start \
+                    --target-org ${{ env.TARGET_ORG_ALIAS }} \
+                    --output-dir "$BACKUP_DIR" \
+                    --manifest ${{ env.DELTA_DIR }}/package/package.xml \
+                    --json > backup-result.json || true
+
+                  # Check if backup succeeded
+                  if [ -f backup-result.json ]; then
+                    BACKUP_STATUS=$(jq -r '.status' backup-result.json 2>/dev/null || echo "1")
+
+                    if [ "$BACKUP_STATUS" = "0" ]; then
+                      echo "✅ Backup created successfully"
+
+                      # Save backup metadata
+                      cat > "$BACKUP_DIR/backup-info.txt" << EOF
+                Backup Information
+                ==================
+                Created: $(date)
+                Branch: ${{ github.ref }}
+                Commit: ${{ github.sha }}
+                Workflow Run: ${{ github.run_id }}
+                Actor: ${{ github.actor }}
+                Target Org: ${{ env.TARGET_ORG_ALIAS }}
+                EOF
+
+                      # Save backup location for later steps
+                      echo "BACKUP_DIR=$BACKUP_DIR" >> $GITHUB_ENV
+                      echo "HAS_BACKUP=true" >> $GITHUB_ENV
+
+                      # Show what was backed up
+                      echo "📋 Backed up files:"
+                      find "$BACKUP_DIR" -type f -name "*.xml" | head -20
+                    else
+                      echo "⚠️  Backup failed, but continuing deployment..."
+                      echo "HAS_BACKUP=false" >> $GITHUB_ENV
+                    fi
+                  else
+                    echo "⚠️  No components to backup"
+                    echo "HAS_BACKUP=false" >> $GITHUB_ENV
+                  fi
+                else
+                  echo "📋 No package.xml found - skipping backup"
+                  echo "HAS_BACKUP=false" >> $GITHUB_ENV
+                fi
+
+                rm -f backup-result.json
+
+          - name: 'Upload backup as GitHub artifact'
+            if: env.HAS_BACKUP == 'true'
+            uses: actions/upload-artifact@v3
+            with:
+              name: salesforce-backup-${{ github.sha }}
+              path: ${{ env.BACKUP_DIR }}
+              retention-days: 30
 
           - name: 'Deploy to environment with destructive changes'
             run: |
