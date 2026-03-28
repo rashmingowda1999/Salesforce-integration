@@ -3,8 +3,8 @@ name: 🔄 Rollback Deployment
 on:
   workflow_dispatch:
     inputs:
-      backup_directory:
-        description: 'Backup directory (e.g., backups/20260326-090000)'
+      artifact_name:
+        description: 'Backup artifact name (e.g., salesforce-backup-abc123...)'
         required: true
         type: string
       target_org:
@@ -36,7 +36,7 @@ jobs:
           echo "==========================================="
           echo "🔄 ROLLBACK DEPLOYMENT"
           echo "==========================================="
-          echo "📦 Backup: ${{ github.event.inputs.backup_directory }}"
+          echo "📦 Artifact: ${{ github.event.inputs.artifact_name }}"
           echo "🎯 Target: ${{ github.event.inputs.target_org }}"
           echo "📝 Reason: ${{ github.event.inputs.reason }}"
           echo "👤 Requested by: ${{ github.actor }}"
@@ -59,24 +59,26 @@ jobs:
             --instance-url ${{ vars.INSTANCE_URL }} \
             --alias ${{ github.event.inputs.target_org }}
 
-      - name: 🔍 Verify backup exists
+      - name: 📥 Download backup artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact_name }}
+          path: ./backup-restore
+
+      - name: 🔍 Verify backup contents
         run: |
-          if [ ! -d "${{ github.event.inputs.backup_directory }}" ]; then
-            echo "❌ ERROR: Backup directory not found!"
-            echo "📂 Looking for: ${{ github.event.inputs.backup_directory }}"
-            echo ""
-            echo "📋 Available backups:"
-            if [ -d "backups" ]; then
-              ls -lht backups/ | head -10
-            else
-              echo "No backups directory found"
-            fi
+          if [ ! -d "./backup-restore" ] || [ -z "$(ls -A ./backup-restore)" ]; then
+            echo "❌ ERROR: Backup artifact is empty or not found!"
+            echo "📂 Artifact name: ${{ github.event.inputs.artifact_name }}"
             exit 1
           fi
 
-          echo "✅ Backup found!"
+          echo "✅ Backup artifact downloaded successfully!"
+          echo ""
           echo "📋 Backup contents:"
-          find "${{ github.event.inputs.backup_directory }}" -type f | head -20
+          find ./backup-restore -type f | head -20
+          echo ""
+          echo "📊 Total files: $(find ./backup-restore -type f | wc -l)"
 
       - name: 🔄 Restore from backup
         id: restore
@@ -90,7 +92,7 @@ jobs:
 
           sf project deploy start \
             --target-org ${{ github.event.inputs.target_org }} \
-            --source-dir "${{ github.event.inputs.backup_directory }}" \
+            --source-dir "./backup-restore" \
             --test-level $TEST_LEVEL \
             --json > rollback-result.json
 
@@ -131,7 +133,7 @@ jobs:
           Date: $(date)
           Performer: ${{ github.actor }}
           Target Org: ${{ github.event.inputs.target_org }}
-          Backup Used: ${{ github.event.inputs.backup_directory }}
+          Backup Artifact: ${{ github.event.inputs.artifact_name }}
           Reason: ${{ github.event.inputs.reason }}
           Deployment ID: ${{ steps.restore.outputs.deployment_id }}
           Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -177,7 +179,7 @@ jobs:
                     \"fields\": [
                       {\"type\": \"mrkdwn\", \"text\": \"*Org:*\\n${{ github.event.inputs.target_org }}\"},
                       {\"type\": \"mrkdwn\", \"text\": \"*By:*\\n${{ github.actor }}\"},
-                      {\"type\": \"mrkdwn\", \"text\": \"*Backup:*\\n${{ github.event.inputs.backup_directory }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Artifact:*\\n${{ github.event.inputs.artifact_name }}\"},
                       {\"type\": \"mrkdwn\", \"text\": \"*Deployment ID:*\\n${{ steps.restore.outputs.deployment_id }}\"}
                     ]
                   },
@@ -215,7 +217,7 @@ jobs:
                     \"type\": \"section\",
                     \"text\": {
                       \"type\": \"mrkdwn\",
-                      \"text\": \"Rollback to *${{ github.event.inputs.target_org }}* failed!\\n\\n*By:* ${{ github.actor }}\\n*Backup:* ${{ github.event.inputs.backup_directory }}\\n\\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>\"
+                      \"text\": \"Rollback to *${{ github.event.inputs.target_org }}* failed!\\n\\n*By:* ${{ github.actor }}\\n*Artifact:* ${{ github.event.inputs.artifact_name }}\\n\\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>\"
                     }
                   }
                 ]
