@@ -60,10 +60,13 @@ jobs:
             --alias ${{ github.event.inputs.target_org }}
 
       - name: 📥 Download backup artifact
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
           name: ${{ github.event.inputs.artifact_name }}
           path: ./backup-restore
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: salesforce_deploy_21_mar.yml
+          workflow_conclusion: success
 
       - name: 🔍 Verify backup contents
         run: |
