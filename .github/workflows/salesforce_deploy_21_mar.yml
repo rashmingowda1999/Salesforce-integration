@@ -890,6 +890,9 @@ jobs:
                     echo "📋 Found Apex/Trigger classes - coverage validation required"
                     NEEDS_COVERAGE_VALIDATION=true
 
+                    echo "[DEBUG] All .cls files in delta directory:"
+                    find ${{ env.DELTA_DIR }}/force-app -name "*.cls" 2>/dev/null || true
+
                     # Find test classes for changed regular Apex classes
                     for apex_file in $(find ${{ env.DELTA_DIR }}/force-app -name "*.cls" -not -name "*Test.cls" 2>/dev/null || true); do
                       CLASS_NAME=$(basename "$apex_file" .cls)
@@ -897,6 +900,7 @@ jobs:
 
                       for pattern in "${CLASS_NAME}Test" "Test${CLASS_NAME}"; do
                         TEST_FILE="${{ env.DELTA_DIR }}/force-app/main/default/classes/${pattern}.cls"
+                        echo "   🔍 Checking for test: $TEST_FILE"
                         if [ -f "$TEST_FILE" ]; then
                           echo "   ✅ Found test class: $pattern"
                           if [ -z "$TEST_CLASSES_TO_RUN" ]; then
@@ -905,6 +909,8 @@ jobs:
                             TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$pattern"
                           fi
                           break
+                        else
+                          echo "   ❌ Not found: $TEST_FILE"
                         fi
                       done
                     done
