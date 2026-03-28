@@ -59,14 +59,46 @@ jobs:
             --instance-url ${{ vars.INSTANCE_URL }} \
             --alias ${{ github.event.inputs.target_org }}
 
-      - name: 📥 Download backup artifact
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          name: ${{ github.event.inputs.artifact_name }}
-          path: ./backup-restore
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: salesforce_deploy_21_mar.yml
-          workflow_conclusion: success
+      - name: 📥 Download backup artifact via GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_NAME: ${{ github.event.inputs.artifact_name }}
+        run: |
+          echo "🔍 Searching for artifact: $ARTIFACT_NAME"
+
+          # Get artifact URL from GitHub API
+          ARTIFACT_URL=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/artifacts \
+            --jq ".artifacts[] | select(.name == \"$ARTIFACT_NAME\" and .expired == false) | .archive_download_url" \
+            | head -1)
+
+          if [ -z "$ARTIFACT_URL" ]; then
+            echo "❌ ERROR: Artifact not found or expired!"
+            echo "📂 Looking for: $ARTIFACT_NAME"
+            echo ""
+            echo "💡 Tip: Check if the artifact exists in a recent deployment run"
+            exit 1
+          fi
+
+          echo "✅ Found artifact at: $ARTIFACT_URL"
+          echo "📥 Downloading artifact..."
+
+          # Download artifact ZIP
+          gh api "$ARTIFACT_URL" > artifact.zip
+
+          # Verify download
+          if [ ! -f artifact.zip ] || [ ! -s artifact.zip ]; then
+            echo "❌ ERROR: Failed to download artifact!"
+            exit 1
+          fi
+
+          echo "📦 Extracting artifact..."
+          mkdir -p ./backup-restore
+          unzip -q artifact.zip -d ./backup-restore
+          rm artifact.zip
+
+          echo "✅ Artifact downloaded and extracted successfully!"
 
       - name: 🔍 Verify backup contents
         run: |
