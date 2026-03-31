@@ -10,6 +10,19 @@ on:
     branches: [ test ]
     paths:
       - 'force-app/**'
+  # Manual trigger with optional parameters
+  workflow_dispatch:
+    inputs:
+      extra_tests:
+        description: 'Additional test classes to run (comma-separated, optional)'
+        required: false
+        type: string
+        default: ''
+      branch:
+        description: 'Branch to deploy (defaults to current branch)'
+        required: false
+        type: string
+        default: ''
 
 env:
   DELTA_DIR: changed-sources
@@ -330,6 +343,65 @@ jobs:
                         fi
                       fi
                     done
+
+                    # Parse PR description for additional test classes
+                    echo ""
+                    echo "📋 Checking PR description for additional test class specifications..."
+
+                    # Get PR body using GitHub API
+                    PR_BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body 2>/dev/null || echo "")
+
+                    if [ -n "$PR_BODY" ]; then
+                      # Extract content from "Additional Test Classes" section
+                      # Look for content between "## Additional Test Classes" and next "##" or end
+                      EXTRA_TESTS=$(echo "$PR_BODY" | awk '/## Additional Test Classes/,/^##/ {if (!/^##/ && !/^<!--/ && !/^$/) print}' | grep -v '```' | xargs | tr -d '\r\n')
+
+                      if [ -n "$EXTRA_TESTS" ]; then
+                        echo "   🎯 PR specifies additional test classes: $EXTRA_TESTS"
+
+                        # Add specified tests to the list
+                        IFS=',' read -ra TESTS <<< "$EXTRA_TESTS"
+                        for test in "${TESTS[@]}"; do
+                          test=$(echo "$test" | xargs)  # trim whitespace
+                          if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
+                            if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                              TEST_CLASSES_TO_RUN="$test"
+                            else
+                              TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                            fi
+                          fi
+                        done
+
+                        echo "   ✅ Tests after PR input: $TEST_CLASSES_TO_RUN"
+                      else
+                        echo "   ℹ️  No additional test classes specified in PR description"
+                      fi
+                    else
+                      echo "   ℹ️  Could not fetch PR description"
+                    fi
+                    echo ""
+
+                    # Check for manual workflow dispatch with extra tests
+                    if [ -n "${{ github.event.inputs.extra_tests || '' }}" ]; then
+                      echo "🎯 Manual workflow dispatch detected"
+                      echo "   Additional test classes specified: ${{ github.event.inputs.extra_tests }}"
+
+                      # Add specified tests to the list
+                      IFS=',' read -ra TESTS <<< "${{ github.event.inputs.extra_tests }}"
+                      for test in "${TESTS[@]}"; do
+                        test=$(echo "$test" | xargs)  # trim whitespace
+                        if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
+                          if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                            TEST_CLASSES_TO_RUN="$test"
+                          else
+                            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                          fi
+                        fi
+                      done
+
+                      echo "   ✅ Tests after manual input: $TEST_CLASSES_TO_RUN"
+                      echo ""
+                    fi
 
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
                       echo "🧪 Test classes to run: $TEST_CLASSES_TO_RUN"
@@ -930,6 +1002,59 @@ jobs:
                         fi
                       fi
                     done
+
+                    # Parse commit message for additional test classes
+                    echo ""
+                    echo "📋 Checking commit message for additional test class specifications..."
+
+                    # Look for [test:Class1,Class2] or [tests:Class1,Class2] syntax in last commit
+                    COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+                    EXTRA_TESTS=$(echo "$COMMIT_MESSAGE" | grep -oP '\[tests?:\K[^\]]+' | head -1)
+
+                    if [ -n "$EXTRA_TESTS" ]; then
+                      echo "   💬 Commit specifies additional test classes: $EXTRA_TESTS"
+
+                      # Add specified tests to the list
+                      IFS=',' read -ra TESTS <<< "$EXTRA_TESTS"
+                      for test in "${TESTS[@]}"; do
+                        test=$(echo "$test" | xargs)  # trim whitespace
+                        if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
+                          if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                            TEST_CLASSES_TO_RUN="$test"
+                          else
+                            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                          fi
+                        fi
+                      done
+
+                      echo "   ✅ Tests after commit input: $TEST_CLASSES_TO_RUN"
+                    else
+                      echo "   ℹ️  No additional test classes specified in commit message"
+                      echo "   💡 Tip: Use [test:Class1,Class2] in commit message to specify additional tests"
+                    fi
+                    echo ""
+
+                    # Check for manual workflow dispatch with extra tests
+                    if [ -n "${{ github.event.inputs.extra_tests || '' }}" ]; then
+                      echo "🎯 Manual workflow dispatch detected"
+                      echo "   Additional test classes specified: ${{ github.event.inputs.extra_tests }}"
+
+                      # Add specified tests to the list
+                      IFS=',' read -ra TESTS <<< "${{ github.event.inputs.extra_tests }}"
+                      for test in "${TESTS[@]}"; do
+                        test=$(echo "$test" | xargs)  # trim whitespace
+                        if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
+                          if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                            TEST_CLASSES_TO_RUN="$test"
+                          else
+                            TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                          fi
+                        fi
+                      done
+
+                      echo "   ✅ Tests after manual input: $TEST_CLASSES_TO_RUN"
+                      echo ""
+                    fi
 
                     # Add test execution to deployment command
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
