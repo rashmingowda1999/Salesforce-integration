@@ -356,10 +356,15 @@ jobs:
 
                       if [ -n "$PR_BODY" ]; then
                         echo "[DEBUG] PR Body fetched successfully"
+                        echo "[DEBUG] First 500 chars of PR body:"
+                        echo "$PR_BODY" | head -c 500
+                        echo ""
 
                         # Extract content from "Additional Test Classes" section
                         # Look for content between "## Additional Test Classes" and next "##" or end
-                        EXTRA_TESTS=$(echo "$PR_BODY" | awk '/## Additional Test Classes/,/^##/ {if (!/^##/ && !/^<!--/ && !/^$/) print}' | grep -v '```' | xargs | tr -d '\r\n')
+                        EXTRA_TESTS=$(echo "$PR_BODY" | awk '/## Additional Test Classes/{flag=1; next} /^##/{flag=0} flag' | grep -v '<!--' | grep -v '^$' | xargs | tr -d '\r\n')
+
+                        echo "[DEBUG] Extracted raw: '$EXTRA_TESTS'"
 
                         if [ -n "$EXTRA_TESTS" ]; then
                           echo "   🎯 PR specifies additional test classes: $EXTRA_TESTS"
