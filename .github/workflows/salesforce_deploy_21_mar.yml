@@ -1,4 +1,4 @@
-name: Salesforce CI/CD Pipeline
+name: Salesforce CI/CD Pipeline Main Test
 on:
   # Dry run validation on PR
   pull_request:
