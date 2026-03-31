@@ -345,41 +345,47 @@ jobs:
                     done
 
                     # Parse PR description for additional test classes
-                    echo ""
-                    echo "📋 Checking PR description for additional test class specifications..."
+                    if [ "${{ github.event_name }}" == "pull_request" ]; then
+                      echo ""
+                      echo "📋 Checking PR description for additional test class specifications..."
 
-                    # Get PR body using GitHub API
-                    PR_BODY=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body 2>/dev/null || echo "")
+                      # Get PR body using GitHub API (no gh CLI needed)
+                      PR_BODY=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                        "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" | \
+                        jq -r '.body // ""' 2>/dev/null || echo "")
 
-                    if [ -n "$PR_BODY" ]; then
-                      # Extract content from "Additional Test Classes" section
-                      # Look for content between "## Additional Test Classes" and next "##" or end
-                      EXTRA_TESTS=$(echo "$PR_BODY" | awk '/## Additional Test Classes/,/^##/ {if (!/^##/ && !/^<!--/ && !/^$/) print}' | grep -v '```' | xargs | tr -d '\r\n')
+                      if [ -n "$PR_BODY" ]; then
+                        echo "[DEBUG] PR Body fetched successfully"
 
-                      if [ -n "$EXTRA_TESTS" ]; then
-                        echo "   🎯 PR specifies additional test classes: $EXTRA_TESTS"
+                        # Extract content from "Additional Test Classes" section
+                        # Look for content between "## Additional Test Classes" and next "##" or end
+                        EXTRA_TESTS=$(echo "$PR_BODY" | awk '/## Additional Test Classes/,/^##/ {if (!/^##/ && !/^<!--/ && !/^$/) print}' | grep -v '```' | xargs | tr -d '\r\n')
 
-                        # Add specified tests to the list
-                        IFS=',' read -ra TESTS <<< "$EXTRA_TESTS"
-                        for test in "${TESTS[@]}"; do
-                          test=$(echo "$test" | xargs)  # trim whitespace
-                          if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
-                            if [ -z "$TEST_CLASSES_TO_RUN" ]; then
-                              TEST_CLASSES_TO_RUN="$test"
-                            else
-                              TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                        if [ -n "$EXTRA_TESTS" ]; then
+                          echo "   🎯 PR specifies additional test classes: $EXTRA_TESTS"
+
+                          # Add specified tests to the list
+                          IFS=',' read -ra TESTS <<< "$EXTRA_TESTS"
+                          for test in "${TESTS[@]}"; do
+                            test=$(echo "$test" | xargs)  # trim whitespace
+                            if [ -n "$test" ] && [[ ",$TEST_CLASSES_TO_RUN," != *",$test,"* ]]; then
+                              if [ -z "$TEST_CLASSES_TO_RUN" ]; then
+                                TEST_CLASSES_TO_RUN="$test"
+                              else
+                                TEST_CLASSES_TO_RUN="$TEST_CLASSES_TO_RUN,$test"
+                              fi
                             fi
-                          fi
-                        done
+                          done
 
-                        echo "   ✅ Tests after PR input: $TEST_CLASSES_TO_RUN"
+                          echo "   ✅ Tests after PR input: $TEST_CLASSES_TO_RUN"
+                        else
+                          echo "   ℹ️  No additional test classes specified in PR description"
+                        fi
                       else
-                        echo "   ℹ️  No additional test classes specified in PR description"
+                        echo "   ⚠️  Could not fetch PR description from GitHub API"
                       fi
-                    else
-                      echo "   ℹ️  Could not fetch PR description"
+                      echo ""
                     fi
-                    echo ""
 
                     # Check for manual workflow dispatch with extra tests
                     if [ -n "${{ github.event.inputs.extra_tests || '' }}" ]; then
