@@ -416,7 +416,18 @@ jobs:
 
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
                       echo "🧪 Test classes to run: $TEST_CLASSES_TO_RUN"
-                      VALIDATE_CMD="$VALIDATE_CMD --test-level RunSpecifiedTests --tests $TEST_CLASSES_TO_RUN"
+
+                      # Build --tests flag with proper syntax (SF CLI v2+ requires space-separated or repeated flags)
+                      TEST_FLAGS=""
+                      IFS=',' read -ra TEST_ARRAY <<< "$TEST_CLASSES_TO_RUN"
+                      for test_class in "${TEST_ARRAY[@]}"; do
+                        test_class=$(echo "$test_class" | xargs)  # trim whitespace
+                        if [ -n "$test_class" ]; then
+                          TEST_FLAGS="$TEST_FLAGS --tests \"$test_class\""
+                        fi
+                      done
+
+                      VALIDATE_CMD="$VALIDATE_CMD --test-level RunSpecifiedTests $TEST_FLAGS"
                     else
                       echo "⚠️  No test classes found - using RunLocalTests"
                       VALIDATE_CMD="$VALIDATE_CMD --test-level RunLocalTests"
@@ -1070,7 +1081,18 @@ jobs:
                     # Add test execution to deployment command
                     if [ -n "$TEST_CLASSES_TO_RUN" ]; then
                       echo "🧪 Running specific test classes: $TEST_CLASSES_TO_RUN"
-                      DEPLOY_CMD="$DEPLOY_CMD --test-level RunSpecifiedTests --tests $TEST_CLASSES_TO_RUN"
+
+                      # Build --tests flag with proper syntax (SF CLI v2+ requires space-separated or repeated flags)
+                      TEST_FLAGS=""
+                      IFS=',' read -ra TEST_ARRAY <<< "$TEST_CLASSES_TO_RUN"
+                      for test_class in "${TEST_ARRAY[@]}"; do
+                        test_class=$(echo "$test_class" | xargs)  # trim whitespace
+                        if [ -n "$test_class" ]; then
+                          TEST_FLAGS="$TEST_FLAGS --tests \"$test_class\""
+                        fi
+                      done
+
+                      DEPLOY_CMD="$DEPLOY_CMD --test-level RunSpecifiedTests $TEST_FLAGS"
                     else
                       echo "⚠️  No test classes found - using RunLocalTests"
                       DEPLOY_CMD="$DEPLOY_CMD --test-level RunLocalTests"
