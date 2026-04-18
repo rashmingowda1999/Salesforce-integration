@@ -1,5 +1,5 @@
 public class AccountDescriptionUpdater {
-    // Trigger workflow to make it visible in GitHub Actions
+    // Trigger workflow to make it visible in GitHub Actions1
     public static void updateAccountDescription(Id accountId, String newDescription) {
         // Retrieve the Account record with validation and error handling
         Account acc = [SELECT Id, Description FROM Account WHERE Id = :accountId];
