@@ -1,16 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
-   <!-- <types>
-        <members>*</members>
-        <name>FlexiPage</name>
-    </types>
     <types>
-        <members>Account.Active3__c</members>
-        <name>CustomField</name>
-    </types>
-   <types>
         <members>AccountDescriptionUpdater</members>
         <members>TestAccountDescriptionUpdater</members>
+        <members>ContactEmailUpdater</members>
+        <members>ContactEmailUpdaterTest</members>
         <name>ApexClass</name>
     </types>
     <types>
@@ -34,12 +28,31 @@
         <name>AuraDefinitionBundle</name>
     </types>
     <types>
+        <members>Account.Account_Status__c</members>
+        <members>Account.Active3__c</members>
+        <members>Account.Active4__c</members>
+        <name>CustomField</name>
+    </types>
+    <types>
+        <members>Account</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
+        <members>*</members>
+        <name>FlexiPage</name>
+    </types>
+    <types>
         <members>*</members>
         <name>LightningComponentBundle</name>
     </types>
     <types>
+        <members>Admin</members>
+        <members>testing profile</members>
+        <name>Profile</name>
+    </types>
+    <types>
         <members>*</members>
         <name>StaticResource</name>
-    </types> -->
+    </types>
     <version>65.0</version>
 </Package>

@@ -12,11 +12,23 @@ if [ ! -f "$PKG" ]; then
   exit 0
 fi
 
-# collect object and field names (very permissive parsing)
-OBJECTS=$(xmllint --xpath 'string(//types[name="CustomObject"]/members)' "$PKG" 2>/dev/null || true)
-FIELDS=$(grep -oPm1 "<members>.*</members>" -n "$PKG" || true)
+# Collect all <members> values under <types><name>CustomObject</name> and <name>CustomField</name>
+# NOTE: In package.xml, <members> always appears BEFORE <name> within a <types> block.
+# So we buffer members per block and emit them only when </types> confirms the type name.
+mapfile -t OBJECTS < <(awk '
+  /<types>/        { buf=""; tname="" }
+  /<members>/      { m=$0; gsub(/^[[:space:]]*<members>|<\/members>[[:space:]]*$/, "", m); buf = buf ? buf "\n" m : m }
+  /<name>/         { n=$0; gsub(/^[[:space:]]*<name>|<\/name>[[:space:]]*$/, "", n); tname=n }
+  /<\/types>/      { if (tname == "CustomObject" && buf != "") print buf }
+' "$PKG")
 
-# Fallback simple approach: create one permissive PermissionSet granting read, edit on found objects/fields
+mapfile -t FIELDS < <(awk '
+  /<types>/        { buf=""; tname="" }
+  /<members>/      { m=$0; gsub(/^[[:space:]]*<members>|<\/members>[[:space:]]*$/, "", m); buf = buf ? buf "\n" m : m }
+  /<name>/         { n=$0; gsub(/^[[:space:]]*<name>|<\/name>[[:space:]]*$/, "", n); tname=n }
+  /<\/types>/      { if (tname == "CustomField" && buf != "") print buf }
+' "$PKG")
+
 PERM_FILE="$OUT_DIR/Generated_FLS.permissionset-meta.xml"
 cat > "$PERM_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -25,15 +37,13 @@ cat > "$PERM_FILE" <<EOF
   <hasActivationRequired>false</hasActivationRequired>
 EOF
 
-# Add objectPermissions blocks for objects detected (simple comma split)
-if [ -n "$OBJECTS" ]; then
-  IFS=',' read -ra OBJS <<< "$OBJECTS"
-  for o in "${OBJS[@]}"; do
-    o2=$(echo "$o" | xargs)
-    if [ -n "$o2" ]; then
-      cat >> "$PERM_FILE" <<OB
+# objectPermissions — one block per detected CustomObject
+for obj in "${OBJECTS[@]}"; do
+  obj=$(echo "$obj" | xargs)
+  [ -z "$obj" ] && continue
+  cat >> "$PERM_FILE" <<OBJ
   <objectPermissions>
-    <object>$o2</object>
+    <object>$obj</object>
     <allowCreate>true</allowCreate>
     <allowDelete>true</allowDelete>
     <allowEdit>true</allowEdit>
@@ -41,15 +51,25 @@ if [ -n "$OBJECTS" ]; then
     <modifyAllRecords>false</modifyAllRecords>
     <viewAllRecords>false</viewAllRecords>
   </objectPermissions>
-OB
-    fi
-  done
-fi
+OBJ
+done
 
-# Note: field-level detection requires more advanced parsing; leave placeholders
+# fieldPermissions — one block per detected CustomField (format: Object.Field__c)
+for field in "${FIELDS[@]}"; do
+  field=$(echo "$field" | xargs)
+  [ -z "$field" ] && continue
+  cat >> "$PERM_FILE" <<FLD
+  <fieldPermissions>
+    <field>$field</field>
+    <editable>true</editable>
+    <readable>true</readable>
+  </fieldPermissions>
+FLD
+done
+
 cat >> "$PERM_FILE" <<EOF
-  <!-- Add <fieldPermissions> entries here as needed -->
 </PermissionSet>
 EOF
 
 echo "Generated permission set: $PERM_FILE"
+echo "  Objects: ${#OBJECTS[@]}, Fields: ${#FIELDS[@]}"

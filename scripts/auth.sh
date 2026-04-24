@@ -4,8 +4,9 @@
 #!/bin/bash
 # scripts/auth.sh
 # Authenticate to Salesforce using JWT or SFDX Auth URL
-# Requires env vars: CONSUMER_KEY, DEPLOYMENT_USER_NAME, JWT_SERVER_KEY, INSTANCE_URL
-# Optionally: SFDX_AUTH_URL
+# SFDX Auth URL mode:  set INSTANCE_URL to the sfdx auth url string
+# JWT mode:            set CONSUMER_KEY, DEPLOYMENT_USER_NAME, JWT_SERVER_KEY
+#                      optionally set LOGIN_URL (default: https://login.salesforce.com)
 set -e
 
 if [ -n "$INSTANCE_URL" ]; then
@@ -20,7 +21,7 @@ else
     --client-id "$CONSUMER_KEY" \
     --jwt-key-file server.key \
     --username "$DEPLOYMENT_USER_NAME" \
-    --instance-url "$INSTANCE_URL" \
+    --instance-url "${LOGIN_URL:-https://login.salesforce.com}" \
     --set-default --alias ci_org
   rm server.key
 fi
