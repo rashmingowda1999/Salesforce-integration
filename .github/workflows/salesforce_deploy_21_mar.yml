@@ -591,7 +591,7 @@ jobs:
   # ============================================
   Deploy-to-dev-environment:
       name: "Deploy to Dev Environment"
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      if: github.event_name == 'push'
       runs-on: ubuntu-latest
       environment: dev
       steps:
@@ -748,12 +748,41 @@ jobs:
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   echo "🔍 Backing up components that will be changed..."
 
+                  # If profile changes are queued, inject Profile type into a backup-specific
+                  # copy of package.xml so the org's current profile permissions are captured
+                  # BEFORE the deployment overwrites them.
+                  BACKUP_MANIFEST="${{ env.DELTA_DIR }}/package/package.xml"
+                  if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ] && [ "$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")" = "true" ]; then
+                    echo "🎯 Profile changes detected - adding Profile type to backup manifest..."
+                    BACKUP_MANIFEST="/tmp/backup-package-$$.xml"
+                    cp "${{ env.DELTA_DIR }}/package/package.xml" "$BACKUP_MANIFEST"
+
+                    # Inject <types> block for Profile before the <version> tag if not already present
+                    if ! grep -q "<name>Profile</name>" "$BACKUP_MANIFEST"; then
+                      TEMP_PKG="/tmp/backup-package-temp-$$.xml"
+                      awk '/<version>/ {
+                          print "    <types>"
+                          print "        <members>*</members>"
+                          print "        <name>Profile</name>"
+                          print "    </types>"
+                      }
+                      {print}' "$BACKUP_MANIFEST" > "$TEMP_PKG"
+                      mv "$TEMP_PKG" "$BACKUP_MANIFEST"
+                      echo "   ✅ Profile type injected into backup manifest"
+                    else
+                      echo "   ✅ Profile type already present in backup manifest"
+                    fi
+                  fi
+
                   # Retrieve current state of components from org
                   sf project retrieve start \
                     --target-org ${{ env.TARGET_ORG_ALIAS }} \
                     --output-dir "$BACKUP_DIR" \
-                    --manifest ${{ env.DELTA_DIR }}/package/package.xml \
+                    --manifest "$BACKUP_MANIFEST" \
                     --json > backup-result.json || true
+
+                  # Clean up temp manifest if created
+                  [ "$BACKUP_MANIFEST" != "${{ env.DELTA_DIR }}/package/package.xml" ] && rm -f "$BACKUP_MANIFEST" || true
 
                   # Check if backup succeeded
                   if [ -f backup-result.json ]; then
@@ -804,6 +833,7 @@ jobs:
               path: ${{ env.BACKUP_DIR }}
               retention-days: 30
 
+          - name: 'Deploy to environment with destructive changes'
           - name: 'Deploy to environment with destructive changes'
             run: |
                 chmod +x scripts/ci/deploy.sh
