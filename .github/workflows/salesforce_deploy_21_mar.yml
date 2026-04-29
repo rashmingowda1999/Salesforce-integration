@@ -748,30 +748,73 @@ jobs:
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   echo "🔍 Backing up components that will be changed..."
 
-                  # If profile changes are queued, inject Profile type into a backup-specific
-                  # copy of package.xml so the org's current profile permissions are captured
-                  # BEFORE the deployment overwrites them.
+                  # If profile changes are queued, inject Profile type AND the related
+                  # CustomObjects into the backup manifest. Salesforce only returns
+                  # fieldPermissions in a profile retrieve when the parent object is
+                  # also present in the same manifest - without it, FLS is stripped.
                   BACKUP_MANIFEST="${{ env.DELTA_DIR }}/package/package.xml"
                   if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ] && [ "$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")" = "true" ]; then
-                    echo "🎯 Profile changes detected - adding Profile type to backup manifest..."
+                    echo "🎯 Profile changes detected - augmenting backup manifest with Profile + related objects..."
                     BACKUP_MANIFEST="/tmp/backup-package-$$.xml"
                     cp "${{ env.DELTA_DIR }}/package/package.xml" "$BACKUP_MANIFEST"
 
-                    # Inject <types> block for Profile before the <version> tag if not already present
-                    if ! grep -q "<name>Profile</name>" "$BACKUP_MANIFEST"; then
-                      TEMP_PKG="/tmp/backup-package-temp-$$.xml"
-                      awk '/<version>/ {
-                          print "    <types>"
-                          print "        <members>*</members>"
-                          print "        <name>Profile</name>"
-                          print "    </types>"
-                      }
-                      {print}' "$BACKUP_MANIFEST" > "$TEMP_PKG"
-                      mv "$TEMP_PKG" "$BACKUP_MANIFEST"
-                      echo "   ✅ Profile type injected into backup manifest"
-                    else
-                      echo "   ✅ Profile type already present in backup manifest"
+                    # --- Collect objects referenced in changed field permissions ---
+                    # Field permission entries look like: <field>Account.Active__4</field>
+                    # Extract unique object names (part before the dot)
+                    CHANGED_OBJECTS=""
+                    for delta_file in $(find "${{ env.DELTA_DIR }}/profile-deltas" -name "*-delta.profile-meta.xml" 2>/dev/null); do
+                      while IFS= read -r obj; do
+                        if [ -n "$obj" ] && [[ ",$CHANGED_OBJECTS," != *",$obj,"* ]]; then
+                          CHANGED_OBJECTS="$CHANGED_OBJECTS,$obj"
+                        fi
+                      done < <(grep -o '<field>[^.]*\.' "$delta_file" 2>/dev/null | sed 's/<field>//' | sed 's/\.//' | sort -u)
+                    done
+                    CHANGED_OBJECTS="${CHANGED_OBJECTS#,}"  # strip leading comma
+                    echo "   🔍 Objects referenced in field permission changes: ${CHANGED_OBJECTS:-none}"
+
+                    TEMP_PKG="/tmp/backup-package-temp-$$.xml"
+
+                    # Build the awk injection — Profile type + one CustomObject member per changed object
+                    PROFILE_BLOCK="    <types>\n        <members>*</members>\n        <name>Profile</name>\n    </types>"
+
+                    OBJECT_BLOCK=""
+                    if [ -n "$CHANGED_OBJECTS" ]; then
+                      OBJECT_BLOCK="    <types>"
+                      IFS=',' read -ra OBJ_ARRAY <<< "$CHANGED_OBJECTS"
+                      for obj in "${OBJ_ARRAY[@]}"; do
+                        OBJECT_BLOCK="$OBJECT_BLOCK\n        <members>$obj</members>"
+                      done
+                      OBJECT_BLOCK="$OBJECT_BLOCK\n        <name>CustomObject</name>\n    </types>"
                     fi
+
+                    # Inject both blocks before <version> tag if Profile not already present
+                    if ! grep -q "<name>Profile</name>" "$BACKUP_MANIFEST"; then
+                      printf '%s' "$OBJECT_BLOCK" > /tmp/obj_block_$$.txt
+                      awk -v profile_block="$PROFILE_BLOCK" -v obj_block="$OBJECT_BLOCK" '
+                      /<version>/ {
+                          if (obj_block != "") printf "%s\n", obj_block
+                          printf "%s\n", profile_block
+                      }
+                      { print }
+                      ' "$BACKUP_MANIFEST" > "$TEMP_PKG"
+                      mv "$TEMP_PKG" "$BACKUP_MANIFEST"
+                      echo "   ✅ Profile + CustomObject types injected into backup manifest"
+                    else
+                      # Profile already present — just inject CustomObject if needed
+                      if [ -n "$CHANGED_OBJECTS" ] && ! grep -q "<name>CustomObject</name>" "$BACKUP_MANIFEST"; then
+                        awk -v obj_block="$OBJECT_BLOCK" '
+                        /<version>/ { printf "%s\n", obj_block }
+                        { print }
+                        ' "$BACKUP_MANIFEST" > "$TEMP_PKG"
+                        mv "$TEMP_PKG" "$BACKUP_MANIFEST"
+                        echo "   ✅ CustomObject types injected (Profile already present)"
+                      else
+                        echo "   ✅ Profile and CustomObject already present in backup manifest"
+                      fi
+                    fi
+
+                    echo "   📋 Final backup manifest:"
+                    cat "$BACKUP_MANIFEST"
                   fi
 
                   # Retrieve current state of components from org
