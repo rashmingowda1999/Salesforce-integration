@@ -834,7 +834,6 @@ jobs:
               retention-days: 30
 
           - name: 'Deploy to environment with destructive changes'
-          - name: 'Deploy to environment with destructive changes'
             run: |
                 chmod +x scripts/ci/deploy.sh
                 scripts/ci/deploy.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}" "${{ env.COVERAGE_THRESHOLD }}" "${{ github.event.inputs.extra_tests || '' }}"
