@@ -748,70 +748,136 @@ jobs:
                 if [ -f "${{ env.DELTA_DIR }}/package/package.xml" ]; then
                   echo "🔍 Backing up components that will be changed..."
 
-                  # If profile changes are queued, inject Profile type AND the related
-                  # CustomObjects into the backup manifest. Salesforce only returns
-                  # fieldPermissions in a profile retrieve when the parent object is
-                  # also present in the same manifest - without it, FLS is stripped.
+                  # If profile changes are queued, inject Profile type AND every related
+                  # metadata type into the backup manifest. Salesforce only returns a
+                  # profile section (FLS, object perms, tab visibility, etc.) when the
+                  # corresponding metadata type is also present in the retrieve manifest.
+                  #
+                  # Mapping of profile section -> required metadata type:
+                  #   fieldPermissions       -> CustomObject  (extract object from "Object.Field")
+                  #   objectPermissions      -> CustomObject  (<object> tag)
+                  #   recordTypeVisibilities -> CustomObject  (extract object from "Object.RecordType")
+                  #   tabVisibilities        -> CustomTab     (<tab> tag)
+                  #   classAccesses          -> ApexClass     (<apexClass> tag)
+                  #   pageAccesses           -> ApexPage      (<apexPage> tag)
+                  #   applicationVisibilities-> CustomApplication (<application> tag)
                   BACKUP_MANIFEST="${{ env.DELTA_DIR }}/package/package.xml"
                   if [ -f "${{ env.DELTA_DIR }}/has_profile_deltas.flag" ] && [ "$(cat "${{ env.DELTA_DIR }}/has_profile_deltas.flag")" = "true" ]; then
-                    echo "🎯 Profile changes detected - augmenting backup manifest with Profile + related objects..."
+                    echo "🎯 Profile changes detected - augmenting backup manifest with Profile + all related types..."
                     BACKUP_MANIFEST="/tmp/backup-package-$$.xml"
                     cp "${{ env.DELTA_DIR }}/package/package.xml" "$BACKUP_MANIFEST"
-
-                    # --- Collect objects referenced in changed field permissions ---
-                    # Field permission entries look like: <field>Account.Active__4</field>
-                    # Extract unique object names (part before the dot)
-                    CHANGED_OBJECTS=""
-                    for delta_file in $(find "${{ env.DELTA_DIR }}/profile-deltas" -name "*-delta.profile-meta.xml" 2>/dev/null); do
-                      while IFS= read -r obj; do
-                        if [ -n "$obj" ] && [[ ",$CHANGED_OBJECTS," != *",$obj,"* ]]; then
-                          CHANGED_OBJECTS="$CHANGED_OBJECTS,$obj"
-                        fi
-                      done < <(grep -o '<field>[^.]*\.' "$delta_file" 2>/dev/null | sed 's/<field>//' | sed 's/\.//' | sort -u)
-                    done
-                    CHANGED_OBJECTS="${CHANGED_OBJECTS#,}"  # strip leading comma
-                    echo "   🔍 Objects referenced in field permission changes: ${CHANGED_OBJECTS:-none}"
-
                     TEMP_PKG="/tmp/backup-package-temp-$$.xml"
 
-                    # Build the awk injection — Profile type + one CustomObject member per changed object
-                    PROFILE_BLOCK="    <types>\n        <members>*</members>\n        <name>Profile</name>\n    </types>"
+                    # Initialise collector variables (comma-separated, no leading comma)
+                    CUSTOM_OBJECTS=""
+                    CUSTOM_TABS=""
+                    APEX_CLASSES=""
+                    APEX_PAGES=""
+                    CUSTOM_APPS=""
 
-                    OBJECT_BLOCK=""
-                    if [ -n "$CHANGED_OBJECTS" ]; then
-                      OBJECT_BLOCK="    <types>"
-                      IFS=',' read -ra OBJ_ARRAY <<< "$CHANGED_OBJECTS"
-                      for obj in "${OBJ_ARRAY[@]}"; do
-                        OBJECT_BLOCK="$OBJECT_BLOCK\n        <members>$obj</members>"
-                      done
-                      OBJECT_BLOCK="$OBJECT_BLOCK\n        <name>CustomObject</name>\n    </types>"
-                    fi
-
-                    # Inject both blocks before <version> tag if Profile not already present
-                    if ! grep -q "<name>Profile</name>" "$BACKUP_MANIFEST"; then
-                      printf '%s' "$OBJECT_BLOCK" > /tmp/obj_block_$$.txt
-                      awk -v profile_block="$PROFILE_BLOCK" -v obj_block="$OBJECT_BLOCK" '
-                      /<version>/ {
-                          if (obj_block != "") printf "%s\n", obj_block
-                          printf "%s\n", profile_block
-                      }
-                      { print }
-                      ' "$BACKUP_MANIFEST" > "$TEMP_PKG"
-                      mv "$TEMP_PKG" "$BACKUP_MANIFEST"
-                      echo "   ✅ Profile + CustomObject types injected into backup manifest"
-                    else
-                      # Profile already present — just inject CustomObject if needed
-                      if [ -n "$CHANGED_OBJECTS" ] && ! grep -q "<name>CustomObject</name>" "$BACKUP_MANIFEST"; then
-                        awk -v obj_block="$OBJECT_BLOCK" '
-                        /<version>/ { printf "%s\n", obj_block }
-                        { print }
-                        ' "$BACKUP_MANIFEST" > "$TEMP_PKG"
-                        mv "$TEMP_PKG" "$BACKUP_MANIFEST"
-                        echo "   ✅ CustomObject types injected (Profile already present)"
+                    add_unique() {
+                      local list="$1" val="$2"
+                      if [ -n "$val" ] && [[ ",$list," != *",$val,"* ]]; then
+                        echo "${list:+$list,}$val"
                       else
-                        echo "   ✅ Profile and CustomObject already present in backup manifest"
+                        echo "$list"
                       fi
-                    fi
+                    }
+
+                    for delta_file in $(find "${{ env.DELTA_DIR }}/profile-deltas" -name "*-delta.profile-meta.xml" 2>/dev/null); do
+                      echo "   🔍 Scanning: $(basename "$delta_file")"
+
+                      # fieldPermissions -> object is the part before the first dot in <field>
+                      while IFS= read -r val; do
+                        CUSTOM_OBJECTS=$(add_unique "$CUSTOM_OBJECTS" "$val")
+                      done < <(grep -o '<field>[^<]*</field>' "$delta_file" 2>/dev/null \
+                                | sed 's/<field>//' | sed 's/<\/field>//' \
+                                | cut -d. -f1 | sort -u)
+
+                      # objectPermissions -> <object> tag value
+                      while IFS= read -r val; do
+                        CUSTOM_OBJECTS=$(add_unique "$CUSTOM_OBJECTS" "$val")
+                      done < <(grep -o '<object>[^<]*</object>' "$delta_file" 2>/dev/null \
+                                | sed 's/<object>//' | sed 's/<\/object>//' | sort -u)
+
+                      # recordTypeVisibilities -> object is part before the dot in <recordType>
+                      while IFS= read -r val; do
+                        CUSTOM_OBJECTS=$(add_unique "$CUSTOM_OBJECTS" "$val")
+                      done < <(grep -o '<recordType>[^<]*</recordType>' "$delta_file" 2>/dev/null \
+                                | sed 's/<recordType>//' | sed 's/<\/recordType>//' \
+                                | cut -d. -f1 | sort -u)
+
+                      # tabVisibilities -> <tab> tag value
+                      while IFS= read -r val; do
+                        CUSTOM_TABS=$(add_unique "$CUSTOM_TABS" "$val")
+                      done < <(grep -o '<tab>[^<]*</tab>' "$delta_file" 2>/dev/null \
+                                | sed 's/<tab>//' | sed 's/<\/tab>//' | sort -u)
+
+                      # classAccesses -> <apexClass> tag value
+                      while IFS= read -r val; do
+                        APEX_CLASSES=$(add_unique "$APEX_CLASSES" "$val")
+                      done < <(grep -o '<apexClass>[^<]*</apexClass>' "$delta_file" 2>/dev/null \
+                                | sed 's/<apexClass>//' | sed 's/<\/apexClass>//' | sort -u)
+
+                      # pageAccesses -> <apexPage> tag value
+                      while IFS= read -r val; do
+                        APEX_PAGES=$(add_unique "$APEX_PAGES" "$val")
+                      done < <(grep -o '<apexPage>[^<]*</apexPage>' "$delta_file" 2>/dev/null \
+                                | sed 's/<apexPage>//' | sed 's/<\/apexPage>//' | sort -u)
+
+                      # applicationVisibilities -> <application> tag value
+                      while IFS= read -r val; do
+                        CUSTOM_APPS=$(add_unique "$CUSTOM_APPS" "$val")
+                      done < <(grep -o '<application>[^<]*</application>' "$delta_file" 2>/dev/null \
+                                | sed 's/<application>//' | sed 's/<\/application>//' | sort -u)
+                    done
+
+                    echo "   CustomObject  : ${CUSTOM_OBJECTS:-none}"
+                    echo "   CustomTab     : ${CUSTOM_TABS:-none}"
+                    echo "   ApexClass     : ${APEX_CLASSES:-none}"
+                    echo "   ApexPage      : ${APEX_PAGES:-none}"
+                    echo "   CustomApp     : ${CUSTOM_APPS:-none}"
+
+                    # Helper: build a <types> XML block from a comma-separated member list and type name
+                    build_types_block() {
+                      local members="$1" type_name="$2"
+                      if [ -z "$members" ]; then echo ""; return; fi
+                      local block="    <types>"
+                      IFS=',' read -ra ARR <<< "$members"
+                      for m in "${ARR[@]}"; do
+                        block="$block\n        <members>$m</members>"
+                      done
+                      block="$block\n        <name>$type_name</name>\n    </types>"
+                      echo "$block"
+                    }
+
+                    PROFILE_BLOCK="    <types>\n        <members>*</members>\n        <name>Profile</name>\n    </types>"
+                    OBJ_BLOCK=$(build_types_block "$CUSTOM_OBJECTS"  "CustomObject")
+                    TAB_BLOCK=$(build_types_block "$CUSTOM_TABS"     "CustomTab")
+                    CLS_BLOCK=$(build_types_block "$APEX_CLASSES"    "ApexClass")
+                    PG_BLOCK=$(build_types_block  "$APEX_PAGES"      "ApexPage")
+                    APP_BLOCK=$(build_types_block "$CUSTOM_APPS"     "CustomApplication")
+
+                    # Inject all blocks before <version>; skip any type already in the manifest
+                    inject_block() {
+                      local block="$1" type_name="$2" manifest="$3" tmp="$4"
+                      if [ -z "$block" ]; then return; fi
+                      if grep -q "<name>$type_name</name>" "$manifest"; then
+                        echo "   ✅ $type_name already present - skipping injection"
+                        return
+                      fi
+                      awk -v blk="$block" '/<version>/ { printf "%s\n", blk } { print }' \
+                        "$manifest" > "$tmp"
+                      mv "$tmp" "$manifest"
+                      echo "   ✅ $type_name injected"
+                    }
+
+                    inject_block "$PROFILE_BLOCK" "Profile"           "$BACKUP_MANIFEST" "$TEMP_PKG"
+                    inject_block "$OBJ_BLOCK"     "CustomObject"      "$BACKUP_MANIFEST" "$TEMP_PKG"
+                    inject_block "$TAB_BLOCK"     "CustomTab"         "$BACKUP_MANIFEST" "$TEMP_PKG"
+                    inject_block "$CLS_BLOCK"     "ApexClass"         "$BACKUP_MANIFEST" "$TEMP_PKG"
+                    inject_block "$PG_BLOCK"      "ApexPage"          "$BACKUP_MANIFEST" "$TEMP_PKG"
+                    inject_block "$APP_BLOCK"     "CustomApplication" "$BACKUP_MANIFEST" "$TEMP_PKG"
 
                     echo "   📋 Final backup manifest:"
                     cat "$BACKUP_MANIFEST"
