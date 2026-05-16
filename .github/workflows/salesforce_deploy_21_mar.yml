@@ -29,6 +29,11 @@ env:
   COVERAGE_THRESHOLD: 85
   TARGET_ORG_ALIAS: targetOrg
 
+# Prevent concurrent deployments to the same branch
+concurrency:
+  group: salesforce-deploy-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel running deploys
+
 jobs:
   # ============================================
   # DRY RUN VALIDATION (Pull Requests)
@@ -43,13 +48,30 @@ jobs:
         pull-requests: write
         issues: write
       steps:
-          - uses: actions/setup-node@v3
-            with:
-              node-version: '18'
           - name: 'Checkout source code'
             uses: actions/checkout@v3
             with:
               fetch-depth: 0
+
+          - uses: actions/setup-node@v3
+            with:
+              node-version: '18'
+
+          # Cache npm packages for faster Salesforce CLI installation
+          - name: 'Cache npm packages'
+            uses: actions/cache@v4
+            with:
+              path: ~/.npm
+              key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v1
+              restore-keys: |
+                ${{ runner.os }}-npm-
+
+          # Cache Salesforce CLI plugins
+          - name: 'Cache Salesforce CLI plugins'
+            uses: actions/cache@v4
+            with:
+              path: ~/.local/share/sf
+              key: ${{ runner.os }}-sf-plugins-v2
 
           # Install Salesforce CLI
           - name: 'Install sfdx'
@@ -514,11 +536,11 @@ jobs:
                         if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
                           echo ""
                           echo "❌ VALIDATION FAILED - INSUFFICIENT TEST COVERAGE!"
-                          echo "   Coverage (${TEST_RUN_COVERAGE}%) is below ${{ env.COVERAGE_THRESHOLD }}% threshold."
+                          echo "   Code coverage is ${TEST_RUN_COVERAGE}% which is less than required ${{ env.COVERAGE_THRESHOLD }}%"
                           echo "validation_status=coverage_failed" >> $GITHUB_OUTPUT
                           exit 1
                         else
-                          echo "   ✅ Coverage (${TEST_RUN_COVERAGE}%) meets ${{ env.COVERAGE_THRESHOLD }}% requirement"
+                          echo "   ✅ Code coverage is ${TEST_RUN_COVERAGE}% which meets the required ${{ env.COVERAGE_THRESHOLD }}%"
                         fi
                       fi
                     fi
@@ -595,14 +617,31 @@ jobs:
       runs-on: ubuntu-latest
       environment: dev
       steps:
-          - uses: actions/setup-node@v3
-            with:
-              node-version: '18'
           - name: 'Checkout source code'
             uses: actions/checkout@v3
             with:
-              fetch-depth: '2'
-                
+              fetch-depth: 0
+
+          - uses: actions/setup-node@v3
+            with:
+              node-version: '18'
+
+          # Cache npm packages for faster Salesforce CLI installation
+          - name: 'Cache npm packages'
+            uses: actions/cache@v4
+            with:
+              path: ~/.npm
+              key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v1
+              restore-keys: |
+                ${{ runner.os }}-npm-
+
+          # Cache Salesforce CLI plugins
+          - name: 'Cache Salesforce CLI plugins'
+            uses: actions/cache@v4
+            with:
+              path: ~/.local/share/sf
+              key: ${{ runner.os }}-sf-plugins-v2
+
           # Now Install Salesforce CLI
           - name: 'Install sfdx'
             run: npm install @salesforce/cli --global
@@ -614,17 +653,25 @@ jobs:
             run: |
                 mkdir changed-sources
 
+                # Use github.event.before to capture ALL commits in the push, not just HEAD~1
+                # This prevents silently skipping changes when multiple commits are pushed together
+                BASE_SHA="${{ github.event.before }}"
+                HEAD_SHA="${{ github.sha }}"
+
+                echo "🔍 Comparing changes between $BASE_SHA and $HEAD_SHA"
+                echo ""
+
                 # Show git changes for debugging
-                echo "[DEBUG] Git diff between HEAD~1 and HEAD:"
-                git diff --name-only HEAD~1 HEAD
+                echo "[DEBUG] Git diff between base and head:"
+                git diff --name-only $BASE_SHA $HEAD_SHA
                 echo ""
                 echo "[DEBUG] Deleted files (destructive changes):"
-                git diff --name-only --diff-filter=D HEAD~1 HEAD
+                git diff --name-only --diff-filter=D $BASE_SHA $HEAD_SHA
                 echo ""
 
                 # Run delta generation with destructive changes support
                 echo "🔄 Generating delta packages with destructive changes support..."
-                sf sgd source delta --to "HEAD" --from "HEAD~1" --output-dir changed-sources/ --generate-delta --source-dir force-app/
+                sf sgd source delta --to "$HEAD_SHA" --from "$BASE_SHA" --output-dir changed-sources/ --generate-delta --source-dir force-app/
                 echo "[INFO] Delta generation completed"
 
                 # Show what was created
@@ -678,8 +725,12 @@ jobs:
                 # Make the profile delta handler executable
                 chmod +x scripts/ci/profile_delta_handler.sh
 
+                # Use the same commit comparison as delta generation
+                BASE_SHA="${{ github.event.before }}"
+                HEAD_SHA="${{ github.sha }}"
+
                 # Run profile delta processing
-                scripts/ci/profile_delta_handler.sh "${{ env.DELTA_DIR }}" "HEAD~1" "HEAD"
+                scripts/ci/profile_delta_handler.sh "${{ env.DELTA_DIR }}" "$BASE_SHA" "$HEAD_SHA"
 
                 # Check if we have profile changes to process
                 if [ -f "${{ env.DELTA_DIR }}/profile-deltas/has_profile_changes.flag" ]; then
@@ -943,10 +994,225 @@ jobs:
               retention-days: 30
 
           - name: 'Deploy to environment with destructive changes'
+            id: deployment
             run: |
                 chmod +x scripts/ci/deploy.sh
                 scripts/ci/deploy.sh "${{ env.DELTA_DIR }}" "${{ env.TARGET_ORG_ALIAS }}" "${{ env.COVERAGE_THRESHOLD }}" "${{ github.event.inputs.extra_tests || '' }}"
 
+          - name: 'Post deployment results to PR'
+            if: always()  # Run even if deployment failed
+            uses: actions/github-script@v6
+            with:
+              script: |
+                // Find the PR that was merged to trigger this push
+                let prNumber = null;
+
+                try {
+                  const commits = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    commit_sha: context.sha
+                  });
+
+                  if (commits.data.length > 0) {
+                    // Get the most recently merged PR
+                    const mergedPRs = commits.data.filter(pr => pr.merged_at !== null);
+                    if (mergedPRs.length > 0) {
+                      prNumber = mergedPRs[0].number;
+                    } else if (commits.data.length > 0) {
+                      prNumber = commits.data[0].number;
+                    }
+                  }
+                } catch (error) {
+                  console.log('Could not find associated PR:', error.message);
+                }
+
+                if (!prNumber) {
+                  console.log('No associated PR found - skipping deployment comment');
+                  console.log('This is normal for direct pushes without a PR');
+                  return;
+                }
+
+                console.log(`Found associated PR #${prNumber}`);
+
+                // Determine deployment status
+                const deploymentStatus = '${{ steps.deployment.outcome }}'; // success, failure, cancelled, skipped
+
+                // Read deployment summary if available
+                const fs = require('fs');
+                let deploymentSummary = null;
+                try {
+                  if (fs.existsSync('deployment-summary.json')) {
+                    const summaryData = fs.readFileSync('deployment-summary.json', 'utf8');
+                    deploymentSummary = JSON.parse(summaryData);
+                    console.log('Deployment summary loaded:', deploymentSummary);
+                  }
+                } catch (error) {
+                  console.log('Could not read deployment summary:', error.message);
+                }
+
+                let commentBody = '## 🚀 Deployment Results\n\n';
+
+                if (deploymentStatus === 'success') {
+                  commentBody += '✅ **Status**: Deployed Successfully\n\n';
+                  commentBody += `**Environment**: Dev (\`test\` branch)\n`;
+                  commentBody += `**Commit**: \`${context.sha.substring(0, 7)}\`\n`;
+
+                  if (deploymentSummary && deploymentSummary.deploymentId) {
+                    commentBody += `**Deployment ID**: \`${deploymentSummary.deploymentId}\`\n`;
+                  }
+
+                  commentBody += `**Deployed At**: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC\n\n`;
+
+                  commentBody += '### ✅ Deployment Completed\n';
+                  commentBody += '- All metadata deployed to Salesforce\n';
+
+                  // Show actual test results if available
+                  if (deploymentSummary) {
+                    if (deploymentSummary.testsRun > 0) {
+                      commentBody += `- **${deploymentSummary.testsRun} tests** executed, **${deploymentSummary.testFailures} failures**\n`;
+
+                      if (deploymentSummary.testRunCoverage && deploymentSummary.testRunCoverage !== 'N/A') {
+                        commentBody += `- **Test Run Coverage**: ${deploymentSummary.testRunCoverage}% ✅\n`;
+                      } else {
+                        commentBody += '- Code coverage validated (≥85%)\n';
+                      }
+                    } else {
+                      commentBody += '- No test execution required for this deployment\n';
+                    }
+
+                    if (deploymentSummary.componentsDeployed > 0) {
+                      commentBody += `- **${deploymentSummary.componentsDeployed} components** deployed\n`;
+                    }
+                  } else {
+                    commentBody += '- All tests passed\n';
+                    commentBody += '- Code coverage validated (≥85%)\n';
+                  }
+
+                  commentBody += '- Changes are live in the org\n\n';
+
+                  // Check for destructive changes
+                  const hasDestructive = fs.existsSync('${{ env.DELTA_DIR }}/destructiveChanges/destructiveChanges.xml') ||
+                                        fs.existsSync('${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPost.xml') ||
+                                        fs.existsSync('${{ env.DELTA_DIR }}/destructiveChanges/destructiveChangesPre.xml');
+
+                  if (hasDestructive) {
+                    commentBody += '### ⚠️ Deployment Included Deletions\n';
+                    commentBody += 'This deployment included destructive changes (component deletions).\n';
+                    commentBody += 'A backup was created before deployment.\n\n';
+                  }
+
+                  commentBody += '### 📦 Backup\n';
+                  commentBody += `A backup of the previous org state was created and uploaded as a workflow artifact.\n`;
+                  commentBody += `Retention: 30 days\n\n`;
+
+                } else if (deploymentStatus === 'failure') {
+                  commentBody += '❌ **Status**: Deployment Failed\n\n';
+                  commentBody += `**Commit**: \`${context.sha.substring(0, 7)}\`\n`;
+                  commentBody += `**Failed At**: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC\n\n`;
+
+                  // Check if we have test results showing coverage failure
+                  if (deploymentSummary && deploymentSummary.testRunCoverage && deploymentSummary.testRunCoverage !== 'N/A') {
+                    const coverage = parseFloat(deploymentSummary.testRunCoverage);
+                    if (!isNaN(coverage) && coverage < 85) {
+                      commentBody += '### 🚨 Insufficient Test Coverage\n';
+                      commentBody += `**Current Coverage**: ${deploymentSummary.testRunCoverage}% ❌\n`;
+                      commentBody += `**Required**: ≥85%\n`;
+                      commentBody += `**Gap**: ${(85 - coverage).toFixed(1)}% below threshold\n\n`;
+
+                      if (deploymentSummary.testsRun > 0) {
+                        commentBody += `**Tests Executed**: ${deploymentSummary.testsRun}\n`;
+                        commentBody += `**Test Failures**: ${deploymentSummary.testFailures}\n\n`;
+                      }
+
+                      commentBody += '### 🔧 How to Fix\n';
+                      commentBody += '1. Add more test assertions to existing test classes\n';
+                      commentBody += '2. Ensure all code paths are tested (if/else, try/catch, loops)\n';
+                      commentBody += '3. Run tests locally to verify coverage before pushing:\n';
+                      commentBody += '   ```bash\n';
+                      commentBody += '   sf apex run test --test-level RunSpecifiedTests --tests YourTestClass --code-coverage --result-format human\n';
+                      commentBody += '   ```\n';
+                      commentBody += '4. Aim for 90%+ coverage to provide buffer above 85% threshold\n\n';
+                    } else {
+                      // Other failure reason
+                      commentBody += '### 🚨 Deployment Did Not Complete\n';
+
+                      if (deploymentSummary.testsRun > 0 && deploymentSummary.testFailures > 0) {
+                        commentBody += `**Test Failures**: ${deploymentSummary.testFailures} out of ${deploymentSummary.testsRun} tests failed\n\n`;
+                        commentBody += 'One or more Apex tests failed during deployment.\n\n';
+                        commentBody += '### 🔧 Next Steps\n';
+                        commentBody += '1. Review the workflow logs for specific test failure details\n';
+                        commentBody += '2. Fix the failing test assertions\n';
+                        commentBody += '3. Run tests locally to verify:\n';
+                        commentBody += '   ```bash\n';
+                        commentBody += '   sf apex run test --test-level RunLocalTests --result-format human\n';
+                        commentBody += '   ```\n';
+                        commentBody += '4. Create a new PR with the fixes\n\n';
+                      } else {
+                        commentBody += 'The deployment failed. Common causes:\n';
+                        commentBody += '- **Test failures**: One or more Apex tests failed\n';
+                        commentBody += '- **Metadata conflicts**: Invalid metadata or org conflicts\n';
+                        commentBody += '- **Validation errors**: Profile/permission issues\n';
+                        commentBody += '- **Dependency errors**: Missing required components\n\n';
+
+                        commentBody += '### 🔧 Next Steps\n';
+                        commentBody += '1. Review the workflow logs below for detailed error messages\n';
+                        commentBody += '2. Fix the identified issues\n';
+                        commentBody += '3. Create a new PR with the fixes\n';
+                        commentBody += '4. The deployment will retry automatically when the new PR is merged\n\n';
+                      }
+                    }
+                  } else {
+                    // No deployment summary available
+                    commentBody += '### 🚨 Deployment Did Not Complete\n';
+                    commentBody += 'The deployment to Salesforce failed. Common causes:\n';
+                    commentBody += '- **Test failures**: One or more Apex tests failed\n';
+                    commentBody += '- **Coverage issues**: Test run coverage below 85% threshold\n';
+                    commentBody += '- **Metadata conflicts**: Invalid metadata or org conflicts\n';
+                    commentBody += '- **Validation errors**: Profile/permission issues\n\n';
+
+                    commentBody += '### 🔧 Next Steps\n';
+                    commentBody += '1. Review the workflow logs below for detailed error messages\n';
+                    commentBody += '2. Fix the identified issues\n';
+                    commentBody += '3. Create a new PR with the fixes\n';
+                    commentBody += '4. The deployment will retry automatically when the new PR is merged\n\n';
+                  }
+
+                  commentBody += '### 📊 Org Status\n';
+                  commentBody += '- No changes were deployed (deployment was rolled back)\n';
+                  commentBody += '- Your Salesforce org is unchanged\n';
+                  commentBody += '- Safe to retry after fixing issues\n\n';
+
+                } else if (deploymentStatus === 'cancelled') {
+                  commentBody += '⚠️ **Status**: Deployment Cancelled\n\n';
+                  commentBody += `**Commit**: \`${context.sha.substring(0, 7)}\`\n`;
+                  commentBody += `**Cancelled At**: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC\n\n`;
+                  commentBody += 'The deployment was cancelled before completion.\n';
+                  commentBody += 'This may have been a manual cancellation or a workflow timeout.\n\n';
+                } else {
+                  commentBody += '⚠️ **Status**: Unknown\n\n';
+                  commentBody += 'Please check the workflow logs for details.\n\n';
+                }
+
+                commentBody += '---\n';
+                commentBody += `🤖 **Deployment Run**: [Workflow #${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
+
+                if (deploymentStatus === 'success') {
+                  commentBody += `📥 **Backup Artifact**: [Download](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
+                }
+
+                try {
+                  await github.rest.issues.createComment({
+                    issue_number: prNumber,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: commentBody
+                  });
+                  console.log(`✅ Posted deployment results to PR #${prNumber}`);
+                } catch (error) {
+                  console.log('Failed to post comment:', error.message);
+                  // Don't fail the workflow if comment posting fails
+                }
 
           - name: 'Post-destructive changes validation'
             if: always()

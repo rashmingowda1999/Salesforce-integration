@@ -409,7 +409,7 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
         if [ "$COVERAGE_INT" -lt "$COVERAGE_THRESHOLD" ]; then
           echo ""
           echo "❌ DEPLOYMENT FAILED - INSUFFICIENT TEST COVERAGE!"
-          echo "   Test run coverage (${TEST_RUN_COVERAGE}%) is below the required ${COVERAGE_THRESHOLD}% threshold."
+          echo "   Code coverage is ${TEST_RUN_COVERAGE}% which is less than required ${COVERAGE_THRESHOLD}%"
           echo ""
           echo "🔧 Required Action:"
           echo "   • Improve test coverage in your test classes"
@@ -420,7 +420,7 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
           echo "   that ran for this deployment (${TEST_CLASSES_TO_RUN:-"selected tests"})"
           exit 1
         else
-          echo "   ✅ Test run coverage (${TEST_RUN_COVERAGE}%) meets the ${COVERAGE_THRESHOLD}% requirement"
+          echo "   ✅ Code coverage is ${TEST_RUN_COVERAGE}% which meets the required ${COVERAGE_THRESHOLD}%"
           echo "   📊 This represents coverage achieved by: ${TEST_CLASSES_TO_RUN:-"selected tests"}"
         fi
       else
@@ -478,9 +478,53 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
     echo "   📋 No Apex/Trigger classes in deployment"
     echo "   ✅ Coverage validation not required for this deployment type"
   fi
+
+  # Save deployment summary for GitHub workflow to display in PR comments
+  echo ""
+  echo "💾 Saving deployment summary..."
+
+  DEPLOY_ID=$(echo "$DEPLOY_RESULT" | jq -r '.result.id // "Unknown"')
+  NUM_COMPONENTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.numberComponentsDeployed // 0')
+  NUM_TESTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numTestsRun // 0' 2>/dev/null || echo "0")
+  NUM_FAILURES=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numFailures // 0' 2>/dev/null || echo "0")
+  TEST_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // "N/A"' 2>/dev/null || echo "N/A")
+
+  cat > deployment-summary.json << EOF
+{
+  "deploymentId": "$DEPLOY_ID",
+  "componentsDeployed": $NUM_COMPONENTS,
+  "testsRun": $NUM_TESTS,
+  "testFailures": $NUM_FAILURES,
+  "testRunCoverage": "$TEST_COVERAGE",
+  "status": "success"
+}
+EOF
+
+  echo "   ✅ Deployment summary saved to deployment-summary.json"
 else
   echo "❌ Deployment failed!"
   echo "Deployment output:"
   echo "$DEPLOY_RESULT"
+
+  # Save failure summary with coverage data if available
+  DEPLOY_ID=$(echo "$DEPLOY_RESULT" | jq -r '.result.id // "Unknown"' 2>/dev/null || echo "Unknown")
+  NUM_TESTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numTestsRun // 0' 2>/dev/null || echo "0")
+  NUM_FAILURES=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numFailures // 0' 2>/dev/null || echo "0")
+  TEST_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // "N/A"' 2>/dev/null || echo "N/A")
+  ERROR_MSG=$(echo "$DEPLOY_RESULT" | jq -r '.message // "Deployment failed - see logs for details"' 2>/dev/null || echo "Deployment failed - see logs for details")
+
+  cat > deployment-summary.json << EOF
+{
+  "status": "failure",
+  "deploymentId": "$DEPLOY_ID",
+  "testsRun": $NUM_TESTS,
+  "testFailures": $NUM_FAILURES,
+  "testRunCoverage": "$TEST_COVERAGE",
+  "error": "$ERROR_MSG"
+}
+EOF
+
+  echo "💾 Failure summary saved to deployment-summary.json"
+
   exit 1
 fi
