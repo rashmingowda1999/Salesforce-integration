@@ -396,8 +396,18 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
       echo "$DEPLOY_RESULT" | jq '.result.details.runTestResult' 2>/dev/null || echo "   (Could not extract test result structure)"
       echo ""
 
-      # Extract testRunCoverage for validation
-      TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
+      # Extract testRunCoverage for validation - calculate from codeCoverage array
+      # SF CLI v2 returns individual class coverage, not a single percentage
+      TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '
+        if .result.details.runTestResult.codeCoverage then
+          (.result.details.runTestResult.codeCoverage |
+           map({covered: (.numLocations - .numLocationsNotCovered), total: .numLocations}) |
+           {covered: (map(.covered) | add // 0), total: (map(.total) | add // 0)} |
+           if .total > 0 then ((.covered / .total) * 100) else empty end)
+        else
+          empty
+        end
+      ' 2>/dev/null || echo "")
 
       if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
         echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
@@ -494,13 +504,16 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
   NUM_TESTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numTestsRun // 0' 2>/dev/null || echo "0")
   NUM_FAILURES=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numFailures // 0' 2>/dev/null || echo "0")
 
-  # Try multiple paths for coverage (SF CLI v2 structure varies)
+  # Calculate coverage from codeCoverage array (same as validation)
   TEST_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '
-    .result.details.runTestResult.coverage.summary.testRunCoverage //
-    .result.details.runTestResult.testRunCoverage //
-    .result.details.runTestResult.summary.testRunCoverage //
-    .result.details.runTestResult.totalCoverage //
-    empty
+    if .result.details.runTestResult.codeCoverage then
+      (.result.details.runTestResult.codeCoverage |
+       map({covered: (.numLocations - .numLocationsNotCovered), total: .numLocations}) |
+       {covered: (map(.covered) | add // 0), total: (map(.total) | add // 0)} |
+       if .total > 0 then ((.covered / .total) * 100) else empty end)
+    else
+      empty
+    end
   ' 2>/dev/null || echo "")
 
   # If coverage is empty or null, set to N/A
@@ -508,6 +521,8 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
     TEST_COVERAGE="N/A"
     echo "   ⚠️  Coverage data not available in deployment result"
   else
+    # Round to 1 decimal place
+    TEST_COVERAGE=$(printf "%.1f" "$TEST_COVERAGE")
     echo "   ✅ Coverage extracted: ${TEST_COVERAGE}%"
   fi
 

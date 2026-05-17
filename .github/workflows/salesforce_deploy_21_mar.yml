@@ -528,18 +528,24 @@ jobs:
                       echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
                       echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
 
-                      # Extract test run coverage with multiple fallback paths
+                      # Extract test run coverage - calculate from codeCoverage array
+                      # SF CLI v2 returns individual class coverage, not a single percentage
                       TEST_RUN_COVERAGE=$(echo "$VALIDATE_RESULT" | jq -r '
-                        .result.details.runTestResult.coverage.summary.testRunCoverage //
-                        .result.details.runTestResult.testRunCoverage //
-                        .result.details.runTestResult.summary.testRunCoverage //
-                        .result.details.runTestResult.totalCoverage //
-                        empty
+                        if .result.details.runTestResult.codeCoverage then
+                          (.result.details.runTestResult.codeCoverage |
+                           map({covered: (.numLocations - .numLocationsNotCovered), total: .numLocations}) |
+                           {covered: (map(.covered) | add // 0), total: (map(.total) | add // 0)} |
+                           if .total > 0 then ((.covered / .total) * 100 | tostring) else empty end)
+                        else
+                          empty
+                        end
                       ' 2>/dev/null || echo "")
 
                       echo "[DEBUG] Extracted coverage: '${TEST_RUN_COVERAGE}'"
 
                       if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
+                        # Round to 1 decimal place
+                        TEST_RUN_COVERAGE=$(printf "%.1f" "$TEST_RUN_COVERAGE")
                         echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
 
                         # Save coverage for PR comment
