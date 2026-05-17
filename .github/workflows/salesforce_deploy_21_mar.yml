@@ -53,33 +53,33 @@ jobs:
             with:
               fetch-depth: 0
 
-          - uses: actions/setup-node@v3
+          - uses: actions/setup-node@v4
             with:
-              node-version: '18'
+              node-version: '20'
 
           # Cache npm packages for faster Salesforce CLI installation
           - name: 'Cache npm packages'
             uses: actions/cache@v4
             with:
               path: ~/.npm
-              key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v1
+              key: ${{ runner.os }}-node20-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v2
               restore-keys: |
-                ${{ runner.os }}-npm-
+                ${{ runner.os }}-node20-npm-
 
           # Cache Salesforce CLI plugins
           - name: 'Cache Salesforce CLI plugins'
             uses: actions/cache@v4
             with:
               path: ~/.local/share/sf
-              key: ${{ runner.os }}-sf-plugins-v2
+              key: ${{ runner.os }}-sf-plugins-v3
 
           # Install Salesforce CLI
-          - name: 'Install sfdx'
+          - name: 'Install Salesforce CLI'
             run: npm install @salesforce/cli --global
-          - name: 'Installing sfdx git delta'
+          - name: 'Install sfdx-git-delta plugin'
             run: |
-                echo Y | sfdx plugins:install sfdx-git-delta
-                sfdx plugins
+                echo Y | sf plugins install sfdx-git-delta
+                sf plugins --core
           - name: 'Create delta packages'
             run: |
                 mkdir changed-sources
@@ -622,33 +622,33 @@ jobs:
             with:
               fetch-depth: 0
 
-          - uses: actions/setup-node@v3
+          - uses: actions/setup-node@v4
             with:
-              node-version: '18'
+              node-version: '20'
 
           # Cache npm packages for faster Salesforce CLI installation
           - name: 'Cache npm packages'
             uses: actions/cache@v4
             with:
               path: ~/.npm
-              key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v1
+              key: ${{ runner.os }}-node20-npm-${{ hashFiles('**/package-lock.json') }}-sfdx-v2
               restore-keys: |
-                ${{ runner.os }}-npm-
+                ${{ runner.os }}-node20-npm-
 
           # Cache Salesforce CLI plugins
           - name: 'Cache Salesforce CLI plugins'
             uses: actions/cache@v4
             with:
               path: ~/.local/share/sf
-              key: ${{ runner.os }}-sf-plugins-v2
+              key: ${{ runner.os }}-sf-plugins-v3
 
           # Now Install Salesforce CLI
-          - name: 'Install sfdx'
+          - name: 'Install Salesforce CLI'
             run: npm install @salesforce/cli --global
-          - name: 'Installing sfdx git delta'
-            run: | 
-                echo Y | sfdx plugins:install sfdx-git-delta
-                sfdx plugins
+          - name: 'Install sfdx-git-delta plugin'
+            run: |
+                echo Y | sf plugins install sfdx-git-delta
+                sf plugins --core
           - name: 'Create delta packages'
             run: |
                 mkdir changed-sources
