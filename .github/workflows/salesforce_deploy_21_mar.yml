@@ -315,8 +315,8 @@ jobs:
                 echo ""
                 echo "🔍 Running validation (dry run - no actual deployment)..."
 
-                # Build validation command
-                VALIDATE_CMD_BASE="sf project deploy start --target-org ${{ env.TARGET_ORG_ALIAS }} --dry-run --json"
+                # Build validation command with code coverage flag
+                VALIDATE_CMD_BASE="sf project deploy start --target-org ${{ env.TARGET_ORG_ALIAS }} --dry-run --code-coverage --json"
 
                 # Discover test classes
                 NEEDS_COVERAGE_VALIDATION=false
