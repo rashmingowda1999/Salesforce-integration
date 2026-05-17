@@ -646,6 +646,10 @@ jobs:
       if: github.event_name == 'push'
       runs-on: ubuntu-latest
       environment: dev
+      permissions:
+        contents: read
+        pull-requests: write
+        issues: write
       steps:
           - name: 'Checkout source code'
             uses: actions/checkout@v3
@@ -1037,33 +1041,99 @@ jobs:
                 // Find the PR that was merged to trigger this push
                 let prNumber = null;
 
+                console.log('🔍 Searching for associated PR...');
+                console.log(`Commit SHA: ${context.sha}`);
+                console.log(`Event name: ${context.eventName}`);
+                console.log(`Ref: ${context.ref}`);
+
+                // Method 1: GitHub API - list PRs associated with commit
                 try {
+                  console.log('Method 1: Trying listPullRequestsAssociatedWithCommit...');
                   const commits = await github.rest.repos.listPullRequestsAssociatedWithCommit({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     commit_sha: context.sha
                   });
 
+                  console.log(`Found ${commits.data.length} associated PRs`);
+
                   if (commits.data.length > 0) {
                     // Get the most recently merged PR
                     const mergedPRs = commits.data.filter(pr => pr.merged_at !== null);
+                    console.log(`Found ${mergedPRs.length} merged PRs`);
+
                     if (mergedPRs.length > 0) {
                       prNumber = mergedPRs[0].number;
+                      console.log(`Using merged PR #${prNumber}`);
                     } else if (commits.data.length > 0) {
                       prNumber = commits.data[0].number;
+                      console.log(`Using PR #${prNumber} (not marked as merged)`);
                     }
                   }
                 } catch (error) {
-                  console.log('Could not find associated PR:', error.message);
+                  console.log('Method 1 failed:', error.message);
+                }
+
+                // Method 2: Search recent merged PRs if Method 1 failed
+                if (!prNumber) {
+                  try {
+                    console.log('Method 2: Searching recent merged PRs...');
+                    const recentPRs = await github.rest.pulls.list({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      state: 'closed',
+                      sort: 'updated',
+                      direction: 'desc',
+                      per_page: 10
+                    });
+
+                    // Find PR that was merged to this branch with this commit
+                    const matchingPR = recentPRs.data.find(pr =>
+                      pr.merged_at !== null &&
+                      pr.base.ref === context.ref.replace('refs/heads/', '') &&
+                      pr.merge_commit_sha === context.sha
+                    );
+
+                    if (matchingPR) {
+                      prNumber = matchingPR.number;
+                      console.log(`Found PR #${prNumber} via merge_commit_sha match`);
+                    }
+                  } catch (error) {
+                    console.log('Method 2 failed:', error.message);
+                  }
+                }
+
+                // Method 3: Parse commit message for PR number (e.g., "Merge pull request #123")
+                if (!prNumber) {
+                  try {
+                    console.log('Method 3: Parsing commit message...');
+                    const commit = await github.rest.repos.getCommit({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      ref: context.sha
+                    });
+
+                    const commitMessage = commit.data.commit.message;
+                    console.log(`Commit message: ${commitMessage.substring(0, 100)}`);
+
+                    const prMatch = commitMessage.match(/(?:Merge pull request #|#)(\d+)/i);
+                    if (prMatch) {
+                      prNumber = parseInt(prMatch[1]);
+                      console.log(`Found PR #${prNumber} in commit message`);
+                    }
+                  } catch (error) {
+                    console.log('Method 3 failed:', error.message);
+                  }
                 }
 
                 if (!prNumber) {
-                  console.log('No associated PR found - skipping deployment comment');
+                  console.log('❌ No associated PR found after trying 3 methods');
                   console.log('This is normal for direct pushes without a PR');
+                  console.log('To get deployment comments, always merge via Pull Request');
                   return;
                 }
 
-                console.log(`Found associated PR #${prNumber}`);
+                console.log(`✅ Found associated PR #${prNumber}`);
 
                 // Determine deployment status
                 const deploymentStatus = '${{ steps.deployment.outcome }}'; // success, failure, cancelled, skipped
