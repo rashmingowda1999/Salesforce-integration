@@ -162,7 +162,7 @@ echo ""
 echo "🚀 Deploying changes to $TARGET_ORG_ALIAS..."
 
 # Determine deployment strategy based on change types
-DEPLOY_CMD_BASE="sf project deploy start --target-org $TARGET_ORG_ALIAS --json"
+DEPLOY_CMD_BASE="sf project deploy start --target-org $TARGET_ORG_ALIAS --code-coverage --json"
 
 # Check if we need coverage validation (only for Apex/Trigger additive changes)
 NEEDS_COVERAGE_VALIDATION=false
