@@ -390,6 +390,12 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
       echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
       echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
 
+      # Debug: Show the entire test result structure to find coverage
+      echo ""
+      echo "[DEBUG] Full test result structure for coverage debugging:"
+      echo "$DEPLOY_RESULT" | jq '.result.details.runTestResult' 2>/dev/null || echo "   (Could not extract test result structure)"
+      echo ""
+
       # Extract testRunCoverage for validation
       TEST_RUN_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // .result.details.runTestResult.totalCoverage // empty' 2>/dev/null || echo "")
 
@@ -487,7 +493,23 @@ if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
   NUM_COMPONENTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.numberComponentsDeployed // 0')
   NUM_TESTS=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numTestsRun // 0' 2>/dev/null || echo "0")
   NUM_FAILURES=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.numFailures // 0' 2>/dev/null || echo "0")
-  TEST_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // "N/A"' 2>/dev/null || echo "N/A")
+
+  # Try multiple paths for coverage (SF CLI v2 structure varies)
+  TEST_COVERAGE=$(echo "$DEPLOY_RESULT" | jq -r '
+    .result.details.runTestResult.coverage.summary.testRunCoverage //
+    .result.details.runTestResult.testRunCoverage //
+    .result.details.runTestResult.summary.testRunCoverage //
+    .result.details.runTestResult.totalCoverage //
+    empty
+  ' 2>/dev/null || echo "")
+
+  # If coverage is empty or null, set to N/A
+  if [ -z "$TEST_COVERAGE" ] || [ "$TEST_COVERAGE" = "null" ]; then
+    TEST_COVERAGE="N/A"
+    echo "   ⚠️  Coverage data not available in deployment result"
+  else
+    echo "   ✅ Coverage extracted: ${TEST_COVERAGE}%"
+  fi
 
   cat > deployment-summary.json << EOF
 {
