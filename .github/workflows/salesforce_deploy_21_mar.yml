@@ -532,6 +532,9 @@ jobs:
                       if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
                         echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
 
+                        # Save coverage for PR comment
+                        echo "test_coverage=${TEST_RUN_COVERAGE}" >> $GITHUB_OUTPUT
+
                         COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
                         if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
                           echo ""
@@ -560,6 +563,7 @@ jobs:
                 const fs = require('fs');
                 const validationStatus = '${{ steps.dry_run.outputs.validation_status }}';
                 const validationId = '${{ steps.dry_run.outputs.validation_id }}';
+                const testCoverage = '${{ steps.dry_run.outputs.test_coverage }}';
 
                 let commentBody = '## 🔍 Validation Results (Dry Run)\n\n';
 
@@ -572,16 +576,42 @@ jobs:
                   commentBody += '### What This Means\n';
                   commentBody += '- ✅ All metadata is valid\n';
                   commentBody += '- ✅ All tests passed\n';
-                  commentBody += '- ✅ Code coverage meets requirements\n';
+
+                  // Show exact coverage if available
+                  if (testCoverage && testCoverage !== '') {
+                    commentBody += `- ✅ **Test Run Coverage**: ${testCoverage}% (meets ≥85% requirement)\n`;
+                  } else {
+                    commentBody += '- ✅ Code coverage meets requirements\n';
+                  }
+
                   commentBody += '- ✅ Ready to merge\n\n';
                   commentBody += '**No actual deployment occurred** - this was a validation-only check.\n\n';
                   commentBody += 'Upon merge to `test` branch, the actual deployment will occur.\n';
                 } else if (validationStatus === 'coverage_failed') {
                   commentBody += '❌ **Status**: Validation Failed - Insufficient Coverage\n\n';
+
+                  // Show exact coverage if available
+                  if (testCoverage && testCoverage !== '') {
+                    const coverage = parseFloat(testCoverage);
+                    const gap = (85 - coverage).toFixed(1);
+                    commentBody += `**Current Coverage**: ${testCoverage}% ❌\n`;
+                    commentBody += `**Required**: ≥85%\n`;
+                    commentBody += `**Gap**: ${gap}% below threshold\n\n`;
+                  }
+
                   commentBody += '### Required Action\n';
                   commentBody += '- Improve test coverage in your test classes\n';
                   commentBody += '- Ensure test run coverage ≥ 85%\n';
-                  commentBody += '- Review the workflow logs for detailed coverage breakdown\n';
+                  commentBody += '- Add more assertions to cover all code paths\n';
+                  commentBody += '- Review the workflow logs for detailed coverage breakdown\n\n';
+
+                  commentBody += '### 💡 Quick Fix Tips\n';
+                  commentBody += '1. Run tests locally to identify uncovered lines:\n';
+                  commentBody += '   ```bash\n';
+                  commentBody += '   sf apex run test --test-level RunLocalTests --code-coverage --result-format human\n';
+                  commentBody += '   ```\n';
+                  commentBody += '2. Add test assertions for if/else branches, try/catch blocks\n';
+                  commentBody += '3. Aim for 90%+ to provide buffer above 85% threshold\n';
                 } else if (validationStatus === 'failed') {
                   commentBody += '❌ **Status**: Validation Failed\n\n';
                   commentBody += '### Required Action\n';
