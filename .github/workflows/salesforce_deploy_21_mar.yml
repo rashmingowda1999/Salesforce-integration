@@ -528,12 +528,23 @@ jobs:
                       echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Tests Run: \(.numTestsRun // "0")"'
                       echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult | "   • Failures: \(.numFailures // "0")"'
 
-                      TEST_RUN_COVERAGE=$(echo "$VALIDATE_RESULT" | jq -r '.result.details.runTestResult.coverage.summary.testRunCoverage // .result.details.runTestResult.testRunCoverage // empty' 2>/dev/null || echo "")
+                      # Extract test run coverage with multiple fallback paths
+                      TEST_RUN_COVERAGE=$(echo "$VALIDATE_RESULT" | jq -r '
+                        .result.details.runTestResult.coverage.summary.testRunCoverage //
+                        .result.details.runTestResult.testRunCoverage //
+                        .result.details.runTestResult.summary.testRunCoverage //
+                        .result.details.runTestResult.totalCoverage //
+                        empty
+                      ' 2>/dev/null || echo "")
+
+                      echo "[DEBUG] Extracted coverage: '${TEST_RUN_COVERAGE}'"
+
                       if [ -n "$TEST_RUN_COVERAGE" ] && [ "$TEST_RUN_COVERAGE" != "null" ]; then
                         echo "   • Test Run Coverage: ${TEST_RUN_COVERAGE}%"
 
                         # Save coverage for PR comment
                         echo "test_coverage=${TEST_RUN_COVERAGE}" >> $GITHUB_OUTPUT
+                        echo "[DEBUG] Saved to GITHUB_OUTPUT: test_coverage=${TEST_RUN_COVERAGE}"
 
                         COVERAGE_INT=$(echo "$TEST_RUN_COVERAGE" | cut -d. -f1)
                         if [ "$COVERAGE_INT" -lt "${{ env.COVERAGE_THRESHOLD }}" ]; then
@@ -545,6 +556,8 @@ jobs:
                         else
                           echo "   ✅ Code coverage is ${TEST_RUN_COVERAGE}% which meets the required ${{ env.COVERAGE_THRESHOLD }}%"
                         fi
+                      else
+                        echo "[DEBUG] Coverage not found in validation result - tests may not have run or no coverage data available"
                       fi
                     fi
                   fi
@@ -565,6 +578,11 @@ jobs:
                 const validationId = '${{ steps.dry_run.outputs.validation_id }}';
                 const testCoverage = '${{ steps.dry_run.outputs.test_coverage }}';
 
+                console.log('[DEBUG] Validation outputs:');
+                console.log(`  validation_status: ${validationStatus}`);
+                console.log(`  validation_id: ${validationId}`);
+                console.log(`  test_coverage: '${testCoverage}'`);
+
                 let commentBody = '## 🔍 Validation Results (Dry Run)\n\n';
 
                 if (validationStatus === 'no_changes') {
@@ -578,10 +596,12 @@ jobs:
                   commentBody += '- ✅ All tests passed\n';
 
                   // Show exact coverage if available
-                  if (testCoverage && testCoverage !== '') {
+                  if (testCoverage && testCoverage !== '' && testCoverage !== 'undefined') {
                     commentBody += `- ✅ **Test Run Coverage**: ${testCoverage}% (meets ≥85% requirement)\n`;
+                    console.log('[DEBUG] Displaying exact coverage in comment');
                   } else {
                     commentBody += '- ✅ Code coverage meets requirements\n';
+                    console.log('[DEBUG] No coverage available, showing generic message');
                   }
 
                   commentBody += '- ✅ Ready to merge\n\n';
